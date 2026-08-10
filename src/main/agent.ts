@@ -1,0 +1,221 @@
+import { EventEmitter } from 'node:events';
+import type {
+  AgentConfig,
+  ConnectionState,
+  PrinterConfig,
+  PrintJob,
+  StatusSnapshot,
+  Station,
+} from '../shared/types';
+import { isAutostartEnabled, setAutostart } from './autostart';
+import { ConfigStore } from './config-store';
+import { ConnectionManager } from './connection';
+import { envConfig } from './env';
+import { log } from './logger';
+import { deviceInfo, heartbeat, pair } from './pairing';
+import { PrintEngine } from './print/engine';
+import { JobQueue } from './queue';
+
+const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const PROBE_INTERVAL_MS = 60 * 1000;
+const STATIONS: Station[] = ['BAR', 'KITCHEN'];
+
+/** Wires config + queue + engine + connection together and owns the status snapshot. */
+export class Agent extends EventEmitter {
+  readonly config: ConfigStore;
+  private readonly queue: JobQueue;
+  private readonly engine: PrintEngine;
+  private connection: ConnectionManager | null = null;
+  private connectionState: ConnectionState = 'UNPAIRED';
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private probeTimer: NodeJS.Timeout | null = null;
+  private lastJob: StatusSnapshot['lastJob'];
+  private printerHealth: StatusSnapshot['printerHealth'] = {};
+
+  constructor(private readonly appVersion: string) {
+    super();
+    this.config = new ConfigStore();
+    this.engine = new PrintEngine((station) => this.config.get().printers[station]);
+    this.queue = new JobQueue(this.config.dataDir(), (job) => this.engine.print(job));
+
+    this.queue.on('ack', (ack) => {
+      this.lastJob = {
+        jobId: ack.jobId,
+        station: this.lastJob?.station ?? 'BAR',
+        status: ack.status === 'printed' ? 'Yazdırıldı' : 'Başarısız',
+        at: new Date().toISOString(),
+        error: ack.error,
+      };
+      this.connection?.ack(ack);
+      this.emitStatus();
+    });
+    this.queue.on('changed', () => this.emitStatus());
+    this.queue.on('failure', (job: PrintJob, error: string) => {
+      this.lastJob = {
+        jobId: job.jobId,
+        station: job.station,
+        status: 'Yeniden denenecek',
+        at: new Date().toISOString(),
+        error,
+      };
+      this.emitStatus();
+    });
+  }
+
+  // --- lifecycle ----------------------------------------------------------
+
+  start(): void {
+    setAutostart(this.config.get().autostart);
+    this.queue.start();
+    this.connectIfPaired();
+    this.probeTimer = setInterval(() => void this.refreshPrinterHealth(), PROBE_INTERVAL_MS);
+    void this.refreshPrinterHealth();
+  }
+
+  stop(): void {
+    this.queue.stop();
+    this.connection?.close();
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.probeTimer) clearInterval(this.probeTimer);
+  }
+
+  private connectIfPaired(): void {
+    const token = this.config.getToken();
+    if (!token) {
+      this.setConnectionState('UNPAIRED');
+      return;
+    }
+    const cfg = this.config.get();
+    this.connection?.close();
+    const conn = new ConnectionManager({
+      wsUrl: cfg.wsUrl,
+      token,
+      deviceInfo: deviceInfo(this.appVersion, cfg.deviceName),
+      dataDir: this.config.dataDir(),
+      queuedCount: () => this.queue.size(),
+    });
+    conn.on('state', (state: ConnectionState) => this.setConnectionState(state));
+    conn.on('job', (job: PrintJob) => {
+      log.info('job received', { jobId: job.jobId, station: job.station });
+      this.lastJob = { jobId: job.jobId, station: job.station, status: 'Kuyrukta', at: new Date().toISOString() };
+      this.queue.enqueue(job);
+    });
+    conn.on('connected', () => this.queue.pumpAll());
+    conn.on('unauthorized', () => {
+      // Revoked from the panel or a wiped token: drop credentials, ask for re-pairing.
+      log.warn('token rejected — clearing pairing');
+      this.config.clearToken();
+      this.setConnectionState('UNPAIRED');
+      this.emit('unauthorized');
+    });
+    this.connection = conn;
+    conn.connect();
+
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(() => {
+      const t = this.config.getToken();
+      if (t) void heartbeat(cfg.apiBaseUrl, t, this.appVersion);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private setConnectionState(state: ConnectionState): void {
+    this.connectionState = state;
+    this.emitStatus();
+  }
+
+  // --- actions used by IPC ------------------------------------------------
+
+  async pairWithCode(code: string): Promise<void> {
+    const cfg = this.config.get();
+    const result = await pair(cfg.apiBaseUrl, code, deviceInfo(this.appVersion, cfg.deviceName));
+    this.config.setToken(result.deviceToken);
+    this.config.update({
+      pairing: {
+        deviceId: result.deviceId,
+        tenantId: result.tenantId,
+        branchId: result.branchId,
+        tenantName: result.tenantName,
+        branchName: result.branchName,
+      },
+    });
+    log.info('paired', { tenant: result.tenantName, branch: result.branchName });
+    this.connectIfPaired();
+  }
+
+  unpair(): void {
+    this.connection?.close();
+    this.connection = null;
+    this.config.clearToken();
+    this.setConnectionState('UNPAIRED');
+  }
+
+  setPrinter(station: Station, printer: PrinterConfig | undefined): AgentConfig {
+    const printers = { ...this.config.get().printers };
+    if (printer) printers[station] = printer;
+    else delete printers[station];
+    const cfg = this.config.update({ printers });
+    void this.refreshPrinterHealth();
+    this.queue.pumpAll(); // a fixed printer should drain the backlog immediately
+    return cfg;
+  }
+
+  setAutostartEnabled(enabled: boolean): void {
+    this.config.update({ autostart: enabled });
+    setAutostart(enabled);
+    this.emitStatus();
+  }
+
+  setDeviceName(name: string): void {
+    this.config.update({ deviceName: name.trim() || this.config.get().deviceName });
+    this.emitStatus();
+  }
+
+  testPrint(station: Station): Promise<void> {
+    return this.engine.testPrint(station);
+  }
+
+  async refreshPrinterHealth(): Promise<void> {
+    const health: StatusSnapshot['printerHealth'] = {};
+    for (const station of STATIONS) {
+      if (!this.config.get().printers[station]) continue;
+      const result = await this.engine.probe(station);
+      health[station] = { ok: result.ok, checkedAt: new Date().toISOString(), error: result.error };
+    }
+    this.printerHealth = health;
+    this.emitStatus();
+  }
+
+  status(): StatusSnapshot {
+    const cfg = this.config.get();
+    const env = envConfig();
+    return {
+      connection: this.connectionState,
+      paired: this.config.isPaired(),
+      tenantName: cfg.pairing?.tenantName,
+      branchName: cfg.pairing?.branchName,
+      deviceName: cfg.deviceName,
+      appVersion: this.appVersion,
+      env: env.env,
+      apiBaseUrl: env.apiBaseUrl,
+      logLevel: env.logLevel,
+      autostart: cfg.autostart,
+      queued: this.queue.size(),
+      lastJob: this.lastJob,
+      printers: cfg.printers,
+      printerHealth: this.printerHealth,
+    };
+  }
+
+  private emitStatus(): void {
+    this.emit('status', this.status());
+  }
+
+  /** Dev/QA helper: inject a job as if the gateway had dispatched it. */
+  injectJob(job: PrintJob): boolean {
+    return this.queue.enqueue(job);
+  }
+
+  autostartActive(): boolean {
+    return isAutostartEnabled();
+  }
+}

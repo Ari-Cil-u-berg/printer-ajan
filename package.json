@@ -1,0 +1,46 @@
+{
+  "name": "ari-adisyon-ajan",
+  "productName": "Ari Adisyon Yazıcı Ajanı",
+  "version": "0.1.0",
+  "description": "Ari Adisyon print agent — connects local thermal printers to the cloud POS.",
+  "main": "dist/main/index.js",
+  "author": {
+    "name": "Ari Adisyon",
+    "email": "destek@ariadisyon.com"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "clean": "rimraf dist release",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build:dev": "npm run build && node scripts/write-build-env.mjs development",
+    "build:staging": "npm run build && node scripts/write-build-env.mjs staging",
+    "build:prod": "npm run build && node scripts/write-build-env.mjs production",
+    "dev": "npm run build:dev && node scripts/start.mjs --env=development",
+    "dev:staging": "npm run build:staging && node scripts/start.mjs --env=staging",
+    "start:prod": "npm run build:prod && node scripts/start.mjs --env=production",
+    "mock": "node scripts/mock-server.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run build",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "pack": "npm run build:prod && electron-builder --dir",
+    "pack:staging": "npm run build:staging && electron-builder --dir",
+    "dist:mac": "npm run build:prod && electron-builder --mac",
+    "dist:win": "npm run build:prod && electron-builder --win",
+    "dist:staging:win": "npm run build:staging && electron-builder --win -c.publish=null",
+    "dist:staging:mac": "npm run build:staging && electron-builder --mac -c.publish=null",
+    "release": "npm run build:prod && electron-builder --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "iconv-lite": "^0.6.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "electron": "^33.3.0",
+    "electron-builder": "^25.1.8",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2"
+  }
+}

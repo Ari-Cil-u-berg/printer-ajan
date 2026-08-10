@@ -1,0 +1,147 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --ink: #16181d;
+  --muted: #6b7280;
+  --line: #e3e6ea;
+  --brand: #b8232f;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 15px/1.5 -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+h1 { font-size: 17px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+
+.state { display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+
+main { padding: 18px 22px 32px; display: flex; flex-direction: column; gap: 16px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.help { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+input[type="text"], input[type="number"], select {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  background: #fff;
+  min-width: 0;
+}
+#code { text-transform: uppercase; letter-spacing: 2px; font-weight: 600; width: 180px; }
+
+button {
+  padding: 8px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { background: #f0f1f3; }
+button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+button.primary:hover { filter: brightness(1.08); }
+button:disabled { opacity: 0.55; cursor: default; }
+
+.msg { font-size: 13px; margin: 8px 0 0; min-height: 18px; }
+.msg.bad { color: var(--bad); }
+.msg.ok { color: var(--ok); }
+
+.paired { margin-top: 12px; display: flex; align-items: center; gap: 12px; }
+.hidden { display: none !important; }
+
+.stations { display: flex; flex-direction: column; gap: 14px; }
+.station {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px 14px;
+}
+.station h3 { margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.station .grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px 10px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.status { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; margin: 0 0 12px; font-size: 14px; }
+.status dt { color: var(--muted); }
+.status dd { margin: 0; }
+
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #16181d; --card: #1e2128; --ink: #eef0f3; --muted: #9aa2ae; --line: #2c313a; }
+  input[type="text"], input[type="number"], select, button { background: #262a32; color: var(--ink); }
+  button:hover { background: #2f343d; }
+}
+
+/* --- environment badge --- */
+.env {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+.env.development { border-color: var(--warn); color: var(--warn); }
+.env.staging { border-color: var(--brand); color: var(--brand); }
+
+/* --- log viewer --- */
+.logtools { align-items: center; flex-wrap: wrap; }
+.logtools #logSearch { flex: 1; min-width: 140px; }
+.logtools .msg { margin: 0; }
+
+.logview {
+  margin-top: 10px;
+  height: 240px;
+  overflow: auto;
+  background: #101317;
+  color: #d7dce3;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.logrow { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-word; }
+.logtime { color: #78849a; flex: none; }
+.loglevel { flex: none; width: 44px; color: #78849a; }
+.logrow.info .loglevel { color: #7fb3ff; }
+.logrow.warn .loglevel, .logrow.warn .logmsg { color: #f0b429; }
+.logrow.error .loglevel, .logrow.error .logmsg { color: #ff7b72; }
+.logmsg { flex: 1; }

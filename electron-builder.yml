@@ -1,0 +1,59 @@
+appId: com.ariadisyon.printagent
+productName: Ari Adisyon Yazici Ajani
+copyright: © Ari Adisyon
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+asar: true
+asarUnpack:
+  # powershell.exe must read the script from disk — it cannot be inside the asar.
+  - dist/main/assets/**
+
+publish:
+  provider: github
+  owner: ariadisyon
+  repo: ari-adisyon-ajan
+  releaseType: release
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png # electron-builder derives the .ico
+  # Signing comes from CSC_LINK / CSC_KEY_PASSWORD (or an EV token) in CI.
+  signtoolOptions:
+    signingHashAlgorithms: [sha256]
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  installerLanguages: [tr_TR, en_US]
+  language: 1055 # Turkish
+
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+  category: public.app-category.business
+  icon: build/icon.png # electron-builder derives the .icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # LSUIElement: tray-only, no Dock icon.
+  extendInfo:
+    LSUIElement: 1
+    NSPrintingUsageDescription: Fiş yazdırmak için yazıcılara erişim gerekir.
+
+dmg:
+  title: Ari Adisyon Yazıcı Ajanı

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
+    <title>Ari Adisyon Yazıcı Ajanı</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Ari Adisyon Yazıcı Ajanı</h1>
+        <p class="sub" id="place">—</p>
+      </div>
+      <div class="state" id="state">
+        <span class="env hidden" id="envBadge"></span>
+        <span class="dot" id="dot"></span><span id="stateText">…</span>
+      </div>
+    </header>
+
+    <main>
+      <!-- 1. Pairing -->
+      <section class="card" id="pairCard">
+        <h2>1. Kafeye bağla</h2>
+        <p class="help">
+          Yönetim panelinizde <b>Yazıcı ajanı ekle</b>'ye basın, çıkan 6–8 haneli kodu buraya yazın.
+          Kod 15 dakika geçerlidir.
+        </p>
+        <div class="row">
+          <input id="code" type="text" maxlength="12" placeholder="ÖRN: A7K2QP" autocomplete="off" />
+          <button id="pairBtn" class="primary">Bağla</button>
+        </div>
+        <p class="msg" id="pairMsg"></p>
+        <div id="pairedBox" class="paired hidden">
+          <p>Bağlı: <b id="pairedPlace"></b></p>
+          <button id="unpairBtn" class="ghost">Bağlantıyı kaldır</button>
+        </div>
+      </section>
+
+      <!-- 2. Printers -->
+      <section class="card">
+        <h2>2. Yazıcıları seç</h2>
+        <p class="help">
+          Ağ yazıcısı (IP ile) en sağlam yöntemdir. USB yazıcı kullanıyorsanız önce Windows/Mac'e
+          normal yazıcı olarak kurun, sonra buradan seçin.
+        </p>
+        <div class="stations" id="stations"></div>
+        <div class="row">
+          <button id="refreshBtn" class="ghost">Yazıcıları yenile</button>
+          <button id="scanBtn" class="ghost">Ağda yazıcı ara</button>
+          <span class="msg" id="scanMsg"></span>
+        </div>
+      </section>
+
+      <!-- 3. Status -->
+      <section class="card">
+        <h2>3. Durum</h2>
+        <dl class="status">
+          <dt>Bağlantı</dt><dd id="sConn">—</dd>
+          <dt>Bekleyen fiş</dt><dd id="sQueue">0</dd>
+          <dt>Son iş</dt><dd id="sLast">—</dd>
+          <dt>Bu bilgisayar</dt><dd><input id="deviceName" type="text" /></dd>
+          <dt>Sürüm</dt><dd id="sVersion">—</dd>
+          <dt>Ortam / sunucu</dt><dd id="sEnv">—</dd>
+        </dl>
+        <label class="check"><input type="checkbox" id="autostart" /> Bilgisayar açılınca otomatik başlat</label>
+        <div class="row">
+          <button id="updateBtn" class="ghost">Güncellemeleri denetle</button>
+          <button id="logBtn" class="ghost">Günlük dosyası</button>
+          <button id="hideBtn" class="ghost">Pencereyi kapat (arka planda çalışır)</button>
+        </div>
+      </section>
+
+      <!-- 4. Logs -->
+      <section class="card">
+        <h2>4. Günlükler</h2>
+        <p class="help">
+          Uygulamanın canlı kayıtları. Bir sorun yaşarsanız <b>Kopyala</b>'ya basıp destek ekibine
+          gönderin. Kayıtlarda şifre veya eşleştirme kodu yer almaz.
+        </p>
+        <div class="row logtools">
+          <select id="logLevelFilter">
+            <option value="debug">Tümü (debug)</option>
+            <option value="info" selected>Bilgi ve üzeri</option>
+            <option value="warn">Uyarı ve üzeri</option>
+            <option value="error">Sadece hatalar</option>
+          </select>
+          <input id="logSearch" type="text" placeholder="Filtrele…" autocomplete="off" />
+          <label class="check"><input type="checkbox" id="logFollow" checked /> Takip et</label>
+          <span class="msg" id="logMsg"></span>
+        </div>
+        <div class="logview" id="logView"></div>
+        <div class="row">
+          <button id="logCopyBtn" class="ghost">Kopyala</button>
+          <button id="logClearBtn" class="ghost">Ekranı temizle</button>
+          <button id="logFileBtn" class="ghost">Dosyayı aç</button>
+          <button id="logFolderBtn" class="ghost">Klasörü aç</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="index.js"></script>
+  </body>
+</html>
