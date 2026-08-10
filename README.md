@@ -102,6 +102,7 @@ buffer that the settings window streams live under **4. Günlükler**.
 | [src/main/env.ts](src/main/env.ts) | Environment resolution, presets, `.env` loading |
 | [src/main/logger.ts](src/main/logger.ts) | Leveled logging, redaction, rotation, in-app buffer |
 | [src/renderer/](src/renderer/) | Turkish settings UI (pair → printers → status) |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Ortam/log/git kurulumu — ne, neden, nasıl (TR) |
 | [docs/BACKEND.md](docs/BACKEND.md) | Backend contract: models, endpoints, WS protocol |
 | [docs/DOWNLOAD-PAGE.md](docs/DOWNLOAD-PAGE.md) | `/indir` page + `GET /agent/latest` |
 
