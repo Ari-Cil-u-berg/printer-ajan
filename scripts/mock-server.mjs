@@ -14,7 +14,19 @@ import readline from 'node:readline';
 import { WebSocketServer } from 'ws';
 
 const PORT = Number(process.env.PORT ?? 8787);
-const PAIRING_CODE = (process.env.CODE ?? crypto.randomBytes(3).toString('hex')).toUpperCase();
+
+/**
+ * The real backend generates from THIS alphabet, in THIS shape. A mock that
+ * hands out six hex characters is a mock that accepts codes production would
+ * reject, and it hid a broken pairing path through a whole release.
+ */
+const PAIRING_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+function randomPairingCode() {
+  const chars = [...crypto.randomBytes(8)].map((b) => PAIRING_ALPHABET[b % 30]);
+  return `${chars.slice(0, 4).join('')}-${chars.slice(4).join('')}`;
+}
+
+const PAIRING_CODE = (process.env.CODE ?? randomPairingCode()).toUpperCase();
 const tokens = new Set();
 const sockets = new Set();
 let codeUsed = false;
@@ -24,14 +36,22 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+    // Shapes mirror the real API too, not just the paths: every success is
+    // wrapped as `{ data }` and every failure as `{ error }`. Answering with a
+    // bare body is what let 0.1.1 ship an agent that could not read a
+    // successful pairing response.
     const send = (status, payload) => {
+      const enveloped =
+        status < 400 ? { data: payload } : { error: { code: 'UNAUTHENTICATED', ...payload } };
       res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(payload));
+      res.end(JSON.stringify(enveloped));
     };
+
+    const bare = (code) => String(code ?? '').toUpperCase().replace(/[\s-]/g, '');
 
     // Paths mirror the real API: URI-versioned behind the global prefix.
     if (req.url === '/api/v1/agent/pair' && req.method === 'POST') {
-      if (body.code !== PAIRING_CODE) return send(404, { message: 'invalid code' });
+      if (bare(body.code) !== bare(PAIRING_CODE)) return send(404, { message: 'invalid code' });
       if (codeUsed) return send(409, { message: 'code already used' });
       codeUsed = true;
       const deviceToken = crypto.randomUUID();

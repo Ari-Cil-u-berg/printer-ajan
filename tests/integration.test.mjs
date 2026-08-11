@@ -15,7 +15,9 @@ import { ConnectionManager } from '../dist/main/connection.js';
 import { pair } from '../dist/main/pairing.js';
 import { JobQueue } from '../dist/main/queue.js';
 
-const CODE = 'A7K2QP';
+// Eight characters from the backend's alphabet — the real shape, so this test
+// exercises the code path an operator actually takes.
+const CODE = 'A7K2-QPTN';
 const TOKEN = 'device-token-1';
 
 function tmpDir() {
@@ -42,13 +44,17 @@ async function startGateway({ port = 0, acceptToken = TOKEN, codeUsed = false } 
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+      // Same versioned path AND the same envelope the real API serves: it wraps
+      // every success as `{ data }`. A fake that replies with the bare object
+      // agrees with the agent's bug instead of catching it — which is exactly
+      // what happened in 0.1.1.
       const send = (status, payload) => {
         res.writeHead(status, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(payload));
+        res.end(JSON.stringify(status < 400 ? { data: payload } : { error: payload }));
       };
-      // Same versioned path the real API serves (`src/main/pairing.ts`).
       if (req.url === '/api/v1/agent/pair') {
-        if (body.code !== CODE) return send(404, { message: 'invalid' });
+        const bare = (code) => String(code ?? '').replace(/-/g, '');
+        if (bare(body.code) !== bare(CODE)) return send(404, { message: 'invalid' });
         if (state.used) return send(409, { message: 'used' });
         state.used = true;
         return send(200, {
@@ -102,13 +108,20 @@ const info = { hostname: 'test-pc', platform: 'test', arch: 'x64', appVersion: '
 
 test('pairing exchanges a short-lived code for a durable token', async () => {
   const gw = await startGateway();
-  const result = await pair(gw.apiUrl, ' a7k2qp ', info); // trimmed + upper-cased
-  assert.equal(result.deviceToken, TOKEN);
-  assert.equal(result.branchName, 'Merkez');
+  try {
+    const result = await pair(gw.apiUrl, ' a7k2-qptn ', info); // trimmed + upper-cased
+    assert.equal(result.deviceToken, TOKEN);
+    assert.equal(result.branchName, 'Merkez');
 
-  await assert.rejects(() => pair(gw.apiUrl, CODE, info), /kullanılmış/);
-  await assert.rejects(() => pair(gw.apiUrl, 'WRONGCODE', info), /geçersiz|Kod geçersiz/i);
-  await gw.stop();
+    await assert.rejects(() => pair(gw.apiUrl, CODE, info), /kullanılmış/);
+    // Same length and alphabet as a real code, so it reaches the gateway and
+    // comes back as "wrong" rather than being refused for its shape.
+    await assert.rejects(() => pair(gw.apiUrl, 'WRNG-CDEF', info), /geçersiz|Kod geçersiz/i);
+  } finally {
+    // Without this a failing assertion leaves the gateway listening, and the
+    // test run hangs on the open handle instead of reporting the failure.
+    await gw.stop();
+  }
 });
 
 test('job dispatched over WS is printed once and acked', async () => {
