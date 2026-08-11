@@ -1,7 +1,7 @@
 {
   "name": "ari-adisyon-ajan",
   "productName": "Ari Adisyon Yazıcı Ajanı",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Ari Adisyon print agent — connects local thermal printers to the cloud POS.",
   "main": "dist/main/index.js",
   "author": {

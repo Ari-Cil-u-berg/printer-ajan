@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
+import { STATIONS } from '../shared/types';
 import type { JobAck, PrintJob, Station } from '../shared/types';
 import { atomicWrite } from './fsutil';
 import { log } from './logger';
@@ -19,7 +20,6 @@ interface QueueFile {
   done: { jobId: string; at: number }[];
 }
 
-const STATIONS: Station[] = ['BAR', 'KITCHEN'];
 const DONE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_DONE = 2000;
 const MAX_ATTEMPTS = 20;

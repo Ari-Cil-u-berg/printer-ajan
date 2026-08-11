@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { JobQueue } from '../dist/main/queue.js';
+import { STATIONS } from '../dist/shared/types.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ari-queue-'));
@@ -106,6 +107,26 @@ test('a job persisted before a crash is retried on restart', async () => {
   second.start();
   await waitFor(() => printed.includes('survivor'));
   second.stop();
+});
+
+test('a queued job resumes after restart for every station, cashier included', async () => {
+  // `start()` pumps one worker per station off the shared STATIONS list. When
+  // that list was a second, shorter copy, a cashier ticket waiting on a printer
+  // that had come back was never picked up again — it just sat in queue.json.
+  for (const station of STATIONS) {
+    const dir = tmpDir();
+    const first = new JobQueue(dir, async () => { throw new Error('printer offline'); });
+    first.start();
+    first.enqueue(job(`survivor-${station}`, station));
+    await waitFor(() => JSON.parse(fs.readFileSync(path.join(dir, 'queue.json'), 'utf8')).entries.length === 1);
+    first.stop();
+
+    const printed = [];
+    const second = new JobQueue(dir, async (j) => { printed.push(j.jobId); });
+    second.start();
+    await waitFor(() => printed.includes(`survivor-${station}`));
+    second.stop();
+  }
 });
 
 test('retries a failing printer with backoff, then succeeds', async () => {

@@ -1,12 +1,15 @@
 import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from 'electron';
 import path from 'node:path';
-import type { ConnectionState, StatusSnapshot } from '../shared/types';
+import { STATIONS } from '../shared/types';
+import type { ConnectionState, Station, StatusSnapshot } from '../shared/types';
 import { Agent } from './agent';
 import { trayIconPath } from './assets';
 import { envConfig, takeEnvWarnings } from './env';
 import { registerIpc, streamLogsToWindow } from './ipc';
 import { log } from './logger';
 import { checkForUpdatesNow, initAutoUpdate } from './updater';
+
+const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak', CASHIER: 'Kasa' };
 
 let tray: Tray | null = null;
 let window: BrowserWindow | null = null;
@@ -108,14 +111,12 @@ function updateTray(status: StatusSnapshot): void {
       { label: `Kuyrukta: ${status.queued}`, enabled: false },
       { type: 'separator' },
       { label: 'Ayarları aç', click: () => showWindow() },
-      {
-        label: 'Test yazdır (Bar)',
-        click: () => void agent?.testPrint('BAR').catch((e) => log.warn('test print failed', e)),
-      },
-      {
-        label: 'Test yazdır (Mutfak)',
-        click: () => void agent?.testPrint('KITCHEN').catch((e) => log.warn('test print failed', e)),
-      },
+      // Built from STATIONS: a station that exists but has no way to be tested
+      // is a station nobody notices is broken until a customer is waiting.
+      ...STATIONS.map((station) => ({
+        label: `Test yazdır (${STATION_LABEL[station]})`,
+        click: () => void agent?.testPrint(station).catch((e) => log.warn('test print failed', e)),
+      })),
       { type: 'separator' },
       { label: 'Güncellemeleri denetle', click: () => checkForUpdatesNow() },
       { label: 'Günlük dosyasını aç', click: () => void shell.openPath(log.path()) },

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { isPrintJob } from '../dist/main/connection.js';
+import { STATIONS } from '../dist/shared/types.js';
 
 /**
  * Guards on data that crosses a trust boundary.
@@ -30,6 +31,16 @@ test('a job without a printable body is rejected', () => {
 test('an unknown station never reaches the queue', () => {
   assert.equal(isPrintJob(job({ station: 'TOILET' })), false);
   assert.equal(isPrintJob(job({ station: 42 })), false);
+});
+
+test('every station the backend can send is accepted — all of them', () => {
+  // 0.1.2 accepted two of the three and dropped every cashier receipt as a
+  // "malformed job payload". The guard is checked against the shared list, so
+  // adding a station cannot leave this behind again.
+  for (const station of STATIONS) {
+    assert.equal(isPrintJob(job({ station })), true, station);
+  }
+  assert.deepEqual([...STATIONS], ['BAR', 'KITCHEN', 'CASHIER']);
 });
 
 test('the idempotency key is bounded — it is persisted for 24 hours', () => {

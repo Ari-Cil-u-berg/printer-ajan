@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { STATIONS } from '../shared/types';
 import type {
   AgentConfig,
   ConnectionState,
@@ -18,7 +19,6 @@ import { JobQueue } from './queue';
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const PROBE_INTERVAL_MS = 60 * 1000;
-const STATIONS: Station[] = ['BAR', 'KITCHEN', 'CASHIER'];
 
 /** Wires config + queue + engine + connection together and owns the status snapshot. */
 export class Agent extends EventEmitter {

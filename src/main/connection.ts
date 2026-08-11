@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { isStation } from '../shared/types';
 import type { ClientMessage, ConnectionState, DeviceInfo, JobAck, PrintJob, ServerMessage } from '../shared/types';
 import { atomicWrite } from './fsutil';
 import { log } from './logger';
@@ -157,7 +158,10 @@ export class ConnectionManager extends EventEmitter {
     switch (msg.type) {
       case 'job':
         if (isPrintJob(msg.payload)) this.emit('job', msg.payload);
-        else log.warn('malformed job payload');
+        // Say WHICH job and for WHICH station. A bare "malformed" line cost a
+        // café every cashier receipt for a release: the tickets were arriving
+        // and being dropped, and the log could not tell anyone that.
+        else log.warn('malformed job payload', describeRejectedJob(msg.payload));
         break;
       case 'revoked':
         log.warn('device revoked by panel', { reason: msg.reason });
@@ -273,7 +277,7 @@ export function isPrintJob(value: unknown): value is PrintJob {
   if (typeof job.jobId !== 'string' || job.jobId.length === 0 || job.jobId.length > MAX_JOB_ID) {
     return false;
   }
-  if (job.station !== 'BAR' && job.station !== 'KITCHEN') return false;
+  if (!isStation(job.station)) return false;
   if (job.copies !== undefined && (typeof job.copies !== 'number' || !Number.isFinite(job.copies))) {
     return false;
   }
@@ -281,4 +285,30 @@ export function isPrintJob(value: unknown): value is PrintJob {
 
   if (typeof job.escpos === 'string') return job.escpos.length <= MAX_ESCPOS_B64;
   return isTicketModel(job.content);
+}
+
+/**
+ * Identifying fields of a job we refused, for the log line only.
+ *
+ * Deliberately just the identifiers and the reason: the ticket body is a
+ * customer's order and does not belong in a file support asks people to copy
+ * out. `station` is echoed back even when it is the thing that was wrong —
+ * that is precisely the case worth reading.
+ */
+function describeRejectedJob(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object') return { reason: 'not an object' };
+  const job = value as Partial<PrintJob>;
+  const reason =
+    typeof job.jobId !== 'string' || job.jobId.length === 0 || job.jobId.length > MAX_JOB_ID
+      ? 'jobId'
+      : !isStation(job.station)
+        ? 'station'
+        : job.escpos === undefined && job.content === undefined
+          ? 'no printable body'
+          : 'body';
+  return {
+    jobId: typeof job.jobId === 'string' ? job.jobId.slice(0, MAX_JOB_ID) : null,
+    station: typeof job.station === 'string' ? job.station.slice(0, 32) : null,
+    reason,
+  };
 }

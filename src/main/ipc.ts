@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain, shell } from 'electron';
+import { isStation } from '../shared/types';
 import type { LogEntry, PrinterConfig, Station } from '../shared/types';
 import type { Agent } from './agent';
 import { envConfig } from './env';
@@ -18,8 +19,6 @@ async function guard<T>(fn: () => Promise<T> | T): Promise<Result<T>> {
   }
 }
 
-const STATIONS: Station[] = ['BAR', 'KITCHEN', 'CASHIER'];
-
 /** C0 controls and DEL — never part of a printer name, always part of a probe. */
 function hasControlChars(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
@@ -30,7 +29,7 @@ function hasControlChars(value: string): boolean {
 }
 
 function assertStation(value: unknown): Station {
-  if (STATIONS.includes(value as Station)) return value as Station;
+  if (isStation(value)) return value;
   throw new Error('Geçersiz istasyon');
 }
 

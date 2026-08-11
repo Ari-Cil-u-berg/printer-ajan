@@ -1,6 +1,23 @@
-/** Mirrors the backend's `Station` enum — a value it can send that we cannot
- *  route would sit DISPATCHED and be redelivered forever. */
-export type Station = 'BAR' | 'KITCHEN' | 'CASHIER';
+/**
+ * Mirrors the backend's `Station` enum — a value it can send that we cannot
+ * route would sit DISPATCHED and be redelivered forever.
+ *
+ * THE LIST IS THE DEFINITION, and the type is derived from it, because the two
+ * drifting apart is not hypothetical: 0.1.2 typed three stations while the job
+ * guard accepted two, so every cashier receipt was dropped as "malformed job
+ * payload" and the queue's pump loop would not have resumed one anyway. Adding
+ * a station means editing this array; nothing else keeps its own copy.
+ *
+ * The renderer declares its own because it is a plain script with no module
+ * loader — see src/renderer/index.ts.
+ */
+export const STATIONS = ['BAR', 'KITCHEN', 'CASHIER'] as const;
+
+export type Station = (typeof STATIONS)[number];
+
+export function isStation(value: unknown): value is Station {
+  return typeof value === 'string' && (STATIONS as readonly string[]).includes(value);
+}
 
 export type AppEnv = 'development' | 'staging' | 'production';
 
