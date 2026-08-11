@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { ConnectionState, StatusSnapshot } from '../shared/types';
 import { Agent } from './agent';
 import { trayIconPath } from './assets';
-import { envConfig } from './env';
+import { envConfig, takeEnvWarnings } from './env';
 import { registerIpc, streamLogsToWindow } from './ipc';
 import { log } from './logger';
 import { checkForUpdatesNow, initAutoUpdate } from './updater';
@@ -43,6 +43,9 @@ async function main(): Promise<void> {
     userData: app.getPath('userData'),
     logFile: log.path(),
   });
+
+  // env.ts cannot log for itself (the logger imports it), so it queues.
+  for (const warning of takeEnvWarnings()) log.warn('env', warning);
 
   process.on('uncaughtException', (err) => log.error('uncaught exception', err));
   process.on('unhandledRejection', (reason) => log.error('unhandled rejection', reason));
@@ -166,9 +169,12 @@ export function showWindow(): void {
   });
   window.on('closed', () => { window = null; });
 
-  // Never let the renderer navigate or spawn windows.
+  // Never let the renderer navigate or spawn windows. `openExternal` hands a
+  // string to the OS, which will happily launch `file:`, `smb:` or any
+  // registered custom scheme — so only ordinary web links get through.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (/^https:\/\//i.test(url)) void shell.openExternal(url);
+    else log.warn('blocked external open', { scheme: url.slice(0, 12) });
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event) => event.preventDefault());

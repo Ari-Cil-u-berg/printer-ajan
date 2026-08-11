@@ -103,6 +103,7 @@ buffer that the settings window streams live under **4. Günlükler**.
 | [src/main/logger.ts](src/main/logger.ts) | Leveled logging, redaction, rotation, in-app buffer |
 | [src/renderer/](src/renderer/) | Turkish settings UI (pair → printers → status) |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Ortam/log/git kurulumu — ne, neden, nasıl (TR) |
+| [docs/SECURITY.md](docs/SECURITY.md) | Güven sınırları, saklanan veri, hız sınırları (TR) |
 | [docs/BACKEND.md](docs/BACKEND.md) | Backend contract: models, endpoints, WS protocol |
 | [docs/DOWNLOAD-PAGE.md](docs/DOWNLOAD-PAGE.md) | `/indir` page + `GET /agent/latest` |
 
@@ -144,6 +145,8 @@ Required secrets: `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`, `MAC_CSC_LINK`,
 Unsigned installers trigger SmartScreen/Gatekeeper warnings — budget for the certs.
 
 ## Security notes
+
+Full write-up (Turkish): [docs/SECURITY.md](docs/SECURITY.md).
 
 - Device token is stored via Electron `safeStorage` (OS keychain). If the keychain is
   unavailable the token stays in memory only — it is never written in plaintext.

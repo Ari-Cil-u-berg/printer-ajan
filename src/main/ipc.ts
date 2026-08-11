@@ -20,6 +20,15 @@ async function guard<T>(fn: () => Promise<T> | T): Promise<Result<T>> {
 
 const STATIONS: Station[] = ['BAR', 'KITCHEN'];
 
+/** C0 controls and DEL — never part of a printer name, always part of a probe. */
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 function assertStation(value: unknown): Station {
   if (STATIONS.includes(value as Station)) return value as Station;
   throw new Error('Geçersiz istasyon');
@@ -34,7 +43,15 @@ function assertPrinter(value: unknown): PrinterConfig {
       throw new Error('Geçersiz port');
     }
   } else if (p.target?.kind === 'spooler') {
-    if (!p.target.printerName) throw new Error('Yazıcı seçilmedi');
+    const name = p.target.printerName;
+    if (!name) throw new Error('Yazıcı seçilmedi');
+    // The name is handed to `lp` / `powershell.exe` as an argv entry, never
+    // through a shell — but control characters and absurd lengths have no
+    // legitimate use here and would only ever be someone probing the edge.
+    // Spaces stay legal: "EPSON TM-T20III Receipt" is what a real driver installs.
+    if (typeof name !== 'string' || name.length > 200 || hasControlChars(name)) {
+      throw new Error('Geçersiz yazıcı adı');
+    }
   } else {
     throw new Error('Geçersiz yazıcı türü');
   }

@@ -64,6 +64,10 @@ export class ConnectionManager extends EventEmitter {
         'User-Agent': `AriAdisyonAgent/${this.opts.deviceInfo.appVersion}`,
       },
       handshakeTimeout: 10_000,
+      // `ws` allows 100 MB frames by default. A ticket is kilobytes; anything
+      // larger is a bug or an attempt to exhaust the till's memory before a
+      // single line of our own validation runs.
+      maxPayload: 2 * 1024 * 1024,
     });
     this.ws = ws;
 
@@ -220,12 +224,61 @@ export class ConnectionManager extends EventEmitter {
   }
 }
 
-function isPrintJob(value: unknown): value is PrintJob {
+/**
+ * Everything below is a size or shape limit on data the gateway sends us.
+ *
+ * The gateway is trusted, but "trusted" is not "incapable of a bug", and the
+ * agent runs on a café's till with a durable on-disk queue. An oversized or
+ * malformed job is not a hypothetical: one bad payload is written to
+ * `queue.json`, reloaded on every restart, and retried twenty times. Rejecting
+ * it at the door costs one log line; accepting it can fill a disk and take the
+ * till's printing down until someone deletes a file by hand.
+ */
+const MAX_JOB_ID = 128;
+/** ~1 MB of base64 ≈ 750 KB of ESC/POS — a very long ticket is a few KB. */
+const MAX_ESCPOS_B64 = 1_000_000;
+const MAX_ITEMS = 200;
+const MAX_TEXT = 500;
+
+function isSaneText(value: unknown, max = MAX_TEXT): boolean {
+  return typeof value === 'string' && value.length <= max;
+}
+
+function isTicketModel(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const t = value as Record<string, unknown>;
+  if (!Array.isArray(t.items) || t.items.length > MAX_ITEMS) return false;
+  if (!isSaneText(t.orderNo, 64)) return false;
+  return t.items.every((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const i = item as Record<string, unknown>;
+    const options = i.options;
+    return (
+      typeof i.qty === 'number' &&
+      Number.isFinite(i.qty) &&
+      isSaneText(i.name) &&
+      (i.note === undefined || isSaneText(i.note)) &&
+      (options === undefined ||
+        (Array.isArray(options) && options.length <= 50 && options.every((o) => isSaneText(o))))
+    );
+  });
+}
+
+export function isPrintJob(value: unknown): value is PrintJob {
   if (!value || typeof value !== 'object') return false;
   const job = value as PrintJob;
-  return (
-    typeof job.jobId === 'string' &&
-    (job.station === 'BAR' || job.station === 'KITCHEN') &&
-    (typeof job.escpos === 'string' || typeof job.content === 'object')
-  );
+
+  // The jobId is the idempotency key and is kept for 24h in `done` — an
+  // unbounded one is a slow way to grow a file that is read on every start.
+  if (typeof job.jobId !== 'string' || job.jobId.length === 0 || job.jobId.length > MAX_JOB_ID) {
+    return false;
+  }
+  if (job.station !== 'BAR' && job.station !== 'KITCHEN') return false;
+  if (job.copies !== undefined && (typeof job.copies !== 'number' || !Number.isFinite(job.copies))) {
+    return false;
+  }
+  if (job.codepage !== undefined && !isSaneText(job.codepage, 32)) return false;
+
+  if (typeof job.escpos === 'string') return job.escpos.length <= MAX_ESCPOS_B64;
+  return isTicketModel(job.content);
 }

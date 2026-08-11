@@ -132,14 +132,64 @@ function level(value: string | undefined, fallback: LogLevel): LogLevel {
   return v === 'debug' || v === 'info' || v === 'warn' || v === 'error' ? v : fallback;
 }
 
+/**
+ * In production the endpoints are NOT overridable, and that is a security
+ * control rather than a convenience call.
+ *
+ * The agent holds a device token and prints every order that passes through a
+ * café. Anyone who can set an environment variable for that process — a
+ * modified shortcut, a login script, malware running as the same user — could
+ * otherwise point a till at their own server: they would receive the tickets,
+ * and they would receive the device token the moment somebody re-paired.
+ * Silent, and invisible from the UI.
+ *
+ * Dev and staging keep the override, because that is what they are for. The
+ * escape hatch in production is `ARI_ALLOW_ENDPOINT_OVERRIDE=1`, which is
+ * logged loudly: support may need it once, an attacker gains nothing quiet.
+ */
+function endpoints(env: AppEnv, preset: Omit<EnvConfig, 'env'>): { apiBaseUrl: string; wsUrl: string } {
+  const requested = {
+    apiBaseUrl: (process.env.ARI_API_URL || preset.apiBaseUrl).replace(/\/$/, ''),
+    wsUrl: process.env.ARI_WS_URL || preset.wsUrl,
+  };
+  const overridden =
+    requested.apiBaseUrl !== preset.apiBaseUrl.replace(/\/$/, '') || requested.wsUrl !== preset.wsUrl;
+
+  if (env === 'production' && overridden && !bool(process.env.ARI_ALLOW_ENDPOINT_OVERRIDE, false)) {
+    warnings.push('endpoint override ignored in production');
+    return { apiBaseUrl: preset.apiBaseUrl, wsUrl: preset.wsUrl };
+  }
+
+  // A plaintext endpoint outside development would put the device token on the
+  // wire in the clear. Refuse it rather than degrade quietly.
+  const insecure =
+    env !== 'development' &&
+    (/^http:\/\//i.test(requested.apiBaseUrl) || /^ws:\/\//i.test(requested.wsUrl));
+  if (insecure) {
+    warnings.push(`insecure endpoint rejected in ${env}`);
+    return { apiBaseUrl: preset.apiBaseUrl, wsUrl: preset.wsUrl };
+  }
+
+  return requested;
+}
+
+/**
+ * Collected during `build()` and drained by the main process once logging is up
+ * — this module is imported BY the logger, so it cannot log for itself.
+ */
+const warnings: string[] = [];
+
+export function takeEnvWarnings(): string[] {
+  return warnings.splice(0, warnings.length);
+}
+
 function build(): EnvConfig {
   const env = resolveEnvName();
   loadDotenvFiles(env);
   const preset = PRESETS[env];
   return {
     env,
-    apiBaseUrl: (process.env.ARI_API_URL || preset.apiBaseUrl).replace(/\/$/, ''),
-    wsUrl: process.env.ARI_WS_URL || preset.wsUrl,
+    ...endpoints(env, preset),
     logLevel: level(process.env.ARI_LOG_LEVEL, preset.logLevel),
     autoUpdate: bool(process.env.ARI_AUTO_UPDATE, preset.autoUpdate),
     logToConsole: bool(process.env.ARI_LOG_CONSOLE, preset.logToConsole),
