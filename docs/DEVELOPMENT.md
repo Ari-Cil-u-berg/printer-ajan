@@ -9,8 +9,9 @@ bir dahaki projede kendin verebilesin.
 2. [Log katmanı](#2-log-katmanı)
 3. [Uygulama içi log görüntüleyici](#3-uygulama-içi-log-görüntüleyici)
 4. [Git kurulumu](#4-git-kurulumu)
-5. [Günlük iş akışı](#5-günlük-iş-akışı)
-6. [Yapılacaklar / dikkat](#6-yapılacaklar--dikkat)
+5. [Sürüm çıkarma ve sitedeki indirme düğmeleri](#5-sürüm-çıkarma-ve-sitedeki-indirme-düğmeleri)
+6. [Günlük iş akışı](#6-günlük-iş-akışı)
+7. [Yapılacaklar / dikkat](#7-yapılacaklar--dikkat)
 
 ---
 
@@ -458,7 +459,132 @@ parçası.
 
 ---
 
-## 5. Günlük iş akışı
+## 5. Sürüm çıkarma ve sitedeki indirme düğmeleri
+
+### `gh repo create ... --push` ne gönderir?
+
+**Sadece kaynak kodu.** `github.com/<hesabın>/ari-adisyon-ajan` altına `.ts` dosyaları,
+`package.json`, workflow'lar gider. `.gitignore` sayesinde `node_modules/`, `dist/` ve
+`release/` gitmez.
+
+**Kurulum dosyası (`.exe`, `.dmg`) push ile gitmez** — ve gitmemeli. 80–100 MB'lık bir
+installer'ı her sürümde git geçmişine koymak, repoyu sürüm geçmişi olan yavaş bir dosya
+sunucusuna çevirir; klonlayan herkes tüm geçmişteki tüm installer'ları indirir.
+
+Kurulum dosyaları **GitHub Releases**'a gider. Releases, git geçmişinden ayrı bir
+depolama alanıdır: dosyalar tag'e iliştirilir, klonlanmaz, CDN'den sunulur.
+
+### Sürüm çıkarma akışı
+
+```bash
+npm version 0.1.1          # package.json'ı günceller ve v0.1.1 tag'i atar
+git push --follow-tags     # tag ile birlikte gönder
+```
+
+Gerisi CI ([release.yml](../.github/workflows/release.yml)):
+
+```
+v* tag'i  →  test  →  Windows runner: imzalı NSIS .exe
+                   →  macOS runner:   imzalı + notarize .dmg
+             →  ikisi de GitHub Releases'a yüklenir
+```
+
+Release'e yüklenen dosyalar:
+
+| Dosya | Kim indirir |
+| --- | --- |
+| `…Setup 0.1.1.exe` | İnsan (Windows) |
+| `…-0.1.1-universal.dmg` | İnsan (macOS) |
+| `latest.yml` / `latest-mac.yml` | `electron-updater` — güncelleme akışı |
+| `*.blockmap`, `*-mac.zip` | `electron-updater` — fark güncellemesi yükü |
+
+Son iki satır önemli: aynı release hem **indirme düğmesini** hem de **otomatik
+güncellemeyi** besler. Tek kaynak olduğu için sayfanın önerdiği sürümle uygulamanın
+kendini güncellediği sürüm asla ayrışamaz.
+
+### Sitedeki düğmeler nasıl bağlandı
+
+Site (`ari-adisyon-backend/apps/web`) tarafında yapılanlar:
+
+| Dosya | Rolü |
+| --- | --- |
+| `src/lib/agent-release.ts` | GitHub Releases'ten en yeni sürümü okur (5 dk cache) |
+| `src/app/indir/[os]/route.ts` | `/indir/windows` → en yeni `.exe`'ye 302 |
+| `src/app/indir/latest.json/route.ts` | Sürüm + boyut + SHA-512, JSON olarak |
+| `src/lib/agent-downloads.ts` | CMS satırlarına canlı sürüm/boyut basar |
+
+**Neden `/indir/windows` gibi sürümsüz bir adres?** Önceki kurulumda düğme
+`/indir/ari-yazici-ajani-1.0.0-windows-x86_64-setup.exe` adresini gösteriyordu. Her
+sürümde CMS'te iki bağlantı elle güncellenmek zorundaydı — ve güncellenmediği sürece
+sayfa artık üretilmeyen bir dosyayı öneriyordu. Şimdi adres bir **soru** ("Windows için
+en yenisi ne?"), cevap değil. Destek ekibinin WhatsApp'tan paylaştığı link bir yıl sonra
+da doğru dosyayı verir.
+
+**Neden 302, dosyayı sunucudan geçirmek yerine?** Her indirmede 100 MB'ı Next
+sunucusundan akıtmak, aynı trafiği iki kez ödemek ve bir fonksiyonu dakikalarca meşgul
+etmek demek. GitHub'ın CDN'i bu işi zaten iyi yapıyor; biz sadece *hangi dosya* sorusunu
+cevaplıyoruz.
+
+**Neden yine de kendi origin'imiz?** `<a download>` özniteliği farklı origin'e giden
+bağlantılarda **yok sayılır** — tıklama indirme değil *navigasyon* olur ve ziyaretçi
+okuduğu sayfayı kaybeder. Kendi adresimizden başlayan tıklama, sayfayı yerinde bırakır.
+
+**Sürüm numarası neden CMS'te değil?** Editörün elle yazdığı sürüm, bir sonraki release
+ile yalan olur. Artık CMS *insanın yazdığını* (etiket, not, rozet), release *makinenin
+bildiğini* (sürüm, boyut, dosyanın varlığı) sahipleniyor. Editör yanlış sürüm yazamaz,
+çünkü yazacağı bir alan kalmadı.
+
+### Hata durumlarında ne oluyor
+
+| Durum | Cevap | Neden |
+| --- | --- | --- |
+| Henüz release yok | Düğme gizlenir | 404 veren düğme, ürünü bozuk gösterir |
+| GitHub'a ulaşılamıyor | Düğme kalır, tıklayınca `503` | GitHub kesintisi pazarlama sayfasını boşaltmamalı |
+| O OS için dosya yok | Sadece o düğme gizlenir | Diğer platform çalışmaya devam eder |
+| Bilinmeyen OS | `404` | — |
+
+Kesintide `404` değil `503` dönmek bilinçli: `404`, indirme sayfasının aramadan
+düşmesine yol açar.
+
+### Private repo tuzağı
+
+`--private` ile açtıysan iki şey değişir:
+
+1. **İndirme düğmesi** çalışır, ama sitede `AGENT_RELEASE_TOKEN` gerekir (salt okunur,
+   `contents` yetkili fine-grained token). Site her tıklamada kısa ömürlü imzalı bir
+   bağlantı üretir; token tarayıcıya hiç gitmez.
+2. **Otomatik güncelleme çalışmaz.** `electron-updater` doğrudan GitHub'a bağlanır ve
+   private repo için token ister — o token'ı installer'ın içine koymak, onu herkese
+   dağıtmak demektir. Yani private release repo = otomatik güncelleme yok.
+
+Yaygın çözüm: kaynak private kalır, **release'ler ayrı bir public repoya** yayınlanır
+(`electron-builder.yml` içindeki `publish.repo` oraya bakar). Ya da tek repo public
+yapılır. Karar senin, ama bir tanesini seçmek zorunludur — aksi halde kafeler asla
+güncelleme almaz.
+
+### Sitede ayarlanacaklar
+
+`apps/web/.env`:
+
+```bash
+AGENT_RELEASE_REPO="<hesabın>/ari-adisyon-ajan"
+# yalnızca repo private ise:
+# AGENT_RELEASE_TOKEN="github_pat_..."
+```
+
+CMS'teki eski bağlantıları düzelten veri göçü hazır:
+
+```bash
+pnpm --filter @ari/web migrate     # 20260811_010000_agent_download_routes
+```
+
+Göç neden gerekli? `href` değerleri veritabanında duruyor; seed dosyasını değiştirmek
+yalnızca sıfırdan kurulan bir veritabanını etkiler. Yayındaki sitede düğmeler göç
+çalışana kadar eski dosya adını göstermeye devam eder.
+
+---
+
+## 6. Günlük iş akışı
 
 ```bash
 # Terminal 1 — sahte bulut sunucusu, eşleştirme kodu basar
@@ -503,7 +629,7 @@ zamanında** yakalar.
 
 ---
 
-## 6. Yapılacaklar / dikkat
+## 7. Yapılacaklar / dikkat
 
 - [ ] `electron-builder.yml` → `publish.owner` gerçek GitHub hesabıyla güncellensin
       (yanlışsa auto-update sessizce çalışmaz).
