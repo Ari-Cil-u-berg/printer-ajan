@@ -67,8 +67,21 @@
           <dt>Ortam / sunucu</dt><dd id="sEnv">—</dd>
         </dl>
         <label class="check"><input type="checkbox" id="autostart" /> Bilgisayar açılınca otomatik başlat</label>
+
+        <div class="update" id="updateBox">
+          <div class="update-line">
+            <span class="update-dot" id="updateDot"></span>
+            <span id="updateText">Güncelleme durumu denetleniyor…</span>
+          </div>
+          <p class="help" id="updateDetail"></p>
+          <div class="row">
+            <button id="updateBtn" class="ghost">Güncellemeleri denetle</button>
+            <button id="updateInstallBtn" class="primary hidden">Yeniden başlat ve kur</button>
+            <button id="updateDownloadBtn" class="ghost hidden">İndirme sayfasını aç</button>
+          </div>
+        </div>
+
         <div class="row">
-          <button id="updateBtn" class="ghost">Güncellemeleri denetle</button>
           <button id="logBtn" class="ghost">Günlük dosyası</button>
           <button id="hideBtn" class="ghost">Pencereyi kapat (arka planda çalışır)</button>
         </div>

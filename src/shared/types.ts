@@ -103,6 +103,40 @@ export interface JobAck {
   attempts: number;
 }
 
+/**
+ * What the update section is allowed to say.
+ *
+ * `unsupported` is a first-class state, not an error: macOS builds are unsigned
+ * and genuinely cannot install their own updates, and a screen that pretends
+ * otherwise — a spinner that never resolves, a silent "up to date" — is worse
+ * than one that says so and offers the download page.
+ */
+export type UpdatePhase =
+  | 'unsupported'
+  | 'idle'
+  | 'checking'
+  | 'current'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error';
+
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  /** The version running right now. */
+  currentVersion: string;
+  /** The version on the other end, once known. */
+  newVersion?: string;
+  /** 0–100 while downloading. */
+  percent?: number;
+  /** Why a check failed, or why updates are unsupported here. */
+  detail?: string;
+  /** Last completed check, ISO. Absent until one finishes. */
+  checkedAt?: string;
+  /** Where to get it by hand when the app cannot update itself. */
+  downloadUrl?: string;
+}
+
 export interface DeviceInfo {
   hostname: string;
   platform: string;

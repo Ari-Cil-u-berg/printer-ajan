@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LogEntry, PrinterConfig, StatusSnapshot, Station } from '../shared/types';
+import type { LogEntry, PrinterConfig, StatusSnapshot, Station, UpdateStatus } from '../shared/types';
 
 /** The only surface the renderer gets — no Node, no ipcRenderer passthrough. */
 const api = {
@@ -21,6 +21,11 @@ const api = {
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('settings:autostart', enabled),
   setDeviceName: (name: string) => ipcRenderer.invoke('settings:deviceName', name),
   checkUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
+  getUpdateStatus: () => ipcRenderer.invoke('app:updateStatus'),
+  installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
+  onUpdate: (cb: (status: UpdateStatus) => void): void => {
+    ipcRenderer.on('update', (_e, status: UpdateStatus) => cb(status));
+  },
   openLog: () => ipcRenderer.invoke('app:openLog'),
   openLogFolder: () => ipcRenderer.invoke('app:openLogFolder'),
   hide: () => ipcRenderer.invoke('app:hide'),

@@ -154,6 +154,12 @@ notarization ticket makes macOS report the app as damaged and refuse to launch i
 no way through. Ad-hoc signed, the café clears one "unidentified developer" dialog from
 System Settings → Privacy & Security and the app runs.
 
+The settings window reports all of this rather than hiding it: the update block shows the
+running version, whether a check is in flight, whether one is downloading and at what
+percent, and — on macOS — that updates do not apply here at all, with a button to the
+download page. A check the operator asked for always changes what is on screen, because
+a button that reports nothing teaches people not to press it.
+
 The cost is that **macOS has no auto-update**: Squirrel.Mac verifies the signature of the
 build it downloaded, so an unsigned app can never install its own update.
 [src/main/updater.ts](src/main/updater.ts) skips the check on `darwin` rather than

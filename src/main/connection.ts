@@ -158,10 +158,7 @@ export class ConnectionManager extends EventEmitter {
     switch (msg.type) {
       case 'job':
         if (isPrintJob(msg.payload)) this.emit('job', msg.payload);
-        // Say WHICH job and for WHICH station. A bare "malformed" line cost a
-        // café every cashier receipt for a release: the tickets were arriving
-        // and being dropped, and the log could not tell anyone that.
-        else log.warn('malformed job payload', describeRejectedJob(msg.payload));
+        else this.rejectJob(msg.payload);
         break;
       case 'revoked':
         log.warn('device revoked by panel', { reason: msg.reason });
@@ -173,6 +170,37 @@ export class ConnectionManager extends EventEmitter {
       case 'pong':
         break;
     }
+  }
+
+  /**
+   * Refuse a job OUT LOUD.
+   *
+   * Dropping it silently is what made a dead cashier receipt look like a live
+   * one: the backend hands a job over, waits for an ack that never comes,
+   * reclaims it as stale, and hands it over again — forever. The panel counts
+   * that row as "1 kuyrukta" the whole time, so an operator watches a queue
+   * that will never move and has no way to learn why.
+   *
+   * A failed ack ends it: the row goes FAILED with a reason attached, the
+   * redelivery loop stops, and the number on the panel becomes true again. We
+   * say WHY, because "the agent refused it" is the one fact nobody else has.
+   *
+   * Without a usable jobId there is nothing to ack against, so that case stays
+   * a log line — it is also the only case the backend cannot mis-count, since a
+   * job it never created cannot sit in anyone's queue.
+   */
+  private rejectJob(payload: unknown): void {
+    const details = describeRejectedJob(payload);
+    log.warn('malformed job payload', details);
+
+    const { jobId, reason } = details;
+    if (typeof jobId !== 'string' || jobId.length === 0) return;
+    this.ack({
+      jobId,
+      status: 'failed',
+      attempts: 0,
+      error: `Ajan işi kabul etmedi (${String(reason)}) — sürüm ${this.opts.deviceInfo.appVersion}`,
+    });
   }
 
   // --- acks ---------------------------------------------------------------

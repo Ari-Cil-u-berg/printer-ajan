@@ -145,3 +145,25 @@ button:disabled { opacity: 0.55; cursor: default; }
 .logrow.warn .loglevel, .logrow.warn .logmsg { color: #f0b429; }
 .logrow.error .loglevel, .logrow.error .logmsg { color: #ff7b72; }
 .logmsg { flex: 1; }
+
+/* Update block. Sits inside the status card, above the buttons: an operator
+   looking for "am I on the current version?" is already reading this card. */
+.update {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.update-line { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.update .help { margin: 6px 0 0; }
+.update .row { margin-top: 10px; }
+.update-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.update-dot.ok { background: var(--ok); }
+.update-dot.warn { background: var(--warn); }
+.update-dot.bad { background: var(--bad); }
+/* Checking and downloading are the two states where something is in flight —
+   a still dot next to "İndiriliyor…" reads as a stall. */
+.update-dot.busy { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .update-dot.busy { animation: none; } }

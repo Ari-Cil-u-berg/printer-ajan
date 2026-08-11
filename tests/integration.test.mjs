@@ -155,6 +155,39 @@ test('job dispatched over WS is printed once and acked', async () => {
   await gw.stop();
 });
 
+test('a job the agent cannot accept is nacked, not silently dropped', async () => {
+  // Silence made a dead ticket look like a live one: the backend waits for an
+  // ack, reclaims the job as stale, hands it over again — forever — and the
+  // panel counts it as "1 kuyrukta" the whole time. The nack ends the loop and
+  // makes the number on the panel true.
+  const gw = await startGateway();
+  const dir = tmpDir();
+  const printed = [];
+  const queue = new JobQueue(dir, async (j) => { printed.push(j.jobId); });
+  const conn = new ConnectionManager({
+    wsUrl: gw.wsUrl, token: TOKEN, deviceInfo: info, dataDir: dir, queuedCount: () => queue.size(),
+  });
+  queue.on('ack', (a) => conn.ack(a));
+  conn.on('job', (j) => queue.enqueue(j));
+  queue.start();
+  conn.connect();
+
+  try {
+    await waitFor(() => conn.getState() === 'CONNECTED');
+    gw.dispatch({ jobId: 'unroutable', station: 'TOILET', copies: 1, escpos: 'AA==' });
+
+    await waitFor(() => gw.state.acks.some((a) => a.jobId === 'unroutable'));
+    const ack = gw.state.acks.find((a) => a.jobId === 'unroutable');
+    assert.equal(ack.status, 'failed');
+    assert.match(ack.error, /kabul etmedi/i);
+    assert.deepEqual(printed, [], 'a refused job must never reach a printer');
+  } finally {
+    conn.close();
+    queue.stop();
+    await gw.stop();
+  }
+});
+
 test('reconnects after the gateway restarts and flushes buffered acks', async (t) => {
   const gw = await startGateway();
   const { port } = gw;

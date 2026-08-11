@@ -5,7 +5,7 @@ import type { Agent } from './agent';
 import { envConfig } from './env';
 import { log } from './logger';
 import { listPrinters, scanNetworkPrinters } from './print/printer-registry';
-import { checkForUpdatesNow } from './updater';
+import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -102,7 +102,11 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
     guard(() => { agent.setDeviceName(String(name ?? '')); return agent.status(); }),
   );
 
-  ipcMain.handle('app:checkUpdates', () => guard(() => { checkForUpdatesNow(); return true; }));
+  // Returns the status it starts from, so a click always paints something —
+  // the later phases arrive on the 'update' channel.
+  ipcMain.handle('app:checkUpdates', () => guard(() => checkForUpdatesNow()));
+  ipcMain.handle('app:updateStatus', () => guard(() => updateStatus()));
+  ipcMain.handle('app:installUpdate', () => guard(() => { installUpdateNow(); return true; }));
   ipcMain.handle('app:openLog', () => guard(() => shell.openPath(log.path())));
   ipcMain.handle('app:openLogFolder', () => guard(() => { shell.showItemInFolder(log.path()); return true; }));
   ipcMain.handle('app:env', () => envConfig());

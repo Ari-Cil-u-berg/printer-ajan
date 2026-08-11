@@ -7,7 +7,7 @@ import { trayIconPath } from './assets';
 import { envConfig, takeEnvWarnings } from './env';
 import { registerIpc, streamLogsToWindow } from './ipc';
 import { log } from './logger';
-import { checkForUpdatesNow, initAutoUpdate } from './updater';
+import { checkForUpdatesNow, initAutoUpdate, onUpdateStatus } from './updater';
 
 const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak', CASHIER: 'Kasa' };
 
@@ -67,6 +67,11 @@ async function main(): Promise<void> {
 
   createTray();
   agent.start();
+
+  // The window may not exist yet, and may be closed and reopened later — it
+  // asks for the current status on load, so a missed push is never the whole
+  // story.
+  onUpdateStatus((update) => window?.webContents.send('update', update));
   initAutoUpdate();
 
   // First run (or after a revoke) has nothing to print — show the setup window.

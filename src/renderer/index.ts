@@ -41,6 +41,20 @@ interface DiscoveredPrinter {
   host?: string;
   port?: number;
 }
+type UpdatePhase =
+  | 'unsupported' | 'idle' | 'checking' | 'current'
+  | 'available' | 'downloading' | 'downloaded' | 'error';
+
+interface UpdateStatus {
+  phase: UpdatePhase;
+  currentVersion: string;
+  newVersion?: string;
+  percent?: number;
+  detail?: string;
+  checkedAt?: string;
+  downloadUrl?: string;
+}
+
 interface AgentBridge {
   getStatus(): Promise<StatusSnapshot>;
   onStatus(cb: (s: StatusSnapshot) => void): void;
@@ -54,7 +68,10 @@ interface AgentBridge {
   probe(): Promise<Result<StatusSnapshot>>;
   setAutostart(enabled: boolean): Promise<Result<StatusSnapshot>>;
   setDeviceName(name: string): Promise<Result<StatusSnapshot>>;
-  checkUpdates(): Promise<Result<boolean>>;
+  checkUpdates(): Promise<Result<UpdateStatus>>;
+  getUpdateStatus(): Promise<Result<UpdateStatus>>;
+  installUpdate(): Promise<Result<boolean>>;
+  onUpdate(cb: (status: UpdateStatus) => void): void;
   openLog(): Promise<Result<string>>;
   openLogFolder(): Promise<Result<boolean>>;
   hide(): Promise<void>;
@@ -427,7 +444,21 @@ $('deviceName').addEventListener('change', (e) => {
   void bridge.setDeviceName((e.target as HTMLInputElement).value);
 });
 
-$('updateBtn').addEventListener('click', () => void bridge.checkUpdates());
+$('updateBtn').addEventListener('click', async () => {
+  const res = await bridge.checkUpdates();
+  if (res.ok) renderUpdate(res.data);
+});
+
+$('updateInstallBtn').addEventListener('click', async () => {
+  const res = await bridge.installUpdate();
+  if (!res.ok) {
+    $('updateDetail').textContent = res.error;
+  }
+});
+
+$('updateDownloadBtn').addEventListener('click', () => {
+  if (updateState?.downloadUrl) window.open(updateState.downloadUrl, '_blank');
+});
 $('logBtn').addEventListener('click', () => void bridge.openLog());
 $('hideBtn').addEventListener('click', () => void bridge.hide());
 
@@ -443,8 +474,89 @@ $('logClearBtn').addEventListener('click', async () => {
   setMsg($('logMsg'), 'Ekran temizlendi (dosya korunur).');
 });
 
+let updateState: UpdateStatus | null = null;
+
+/**
+ * One line that is always true, and buttons that only appear when they do
+ * something.
+ *
+ * The old screen had a "Güncellemeleri denetle" button that reported nothing at
+ * all — a click looked identical whether the app was current, an update was
+ * downloading, or the check had failed. Every phase below says which of those
+ * it is, and `unsupported` says so plainly rather than spinning forever on a
+ * macOS build that cannot update itself.
+ */
+function renderUpdate(u: UpdateStatus): void {
+  updateState = u;
+  const dot = $('updateDot');
+  const text = $('updateText');
+  const detail = $('updateDetail');
+  const install = $('updateInstallBtn');
+  const download = $('updateDownloadBtn');
+  const check = $<HTMLButtonElement>('updateBtn');
+
+  const checked = u.checkedAt
+    ? `Son denetim: ${new Date(u.checkedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
+    : '';
+
+  let tone = '';
+  let line = '';
+  let note = checked;
+  let busy = false;
+
+  switch (u.phase) {
+    case 'unsupported':
+      line = `Sürüm ${u.currentVersion}`;
+      note = u.detail ?? '';
+      break;
+    case 'checking':
+      line = 'Güncellemeler denetleniyor…';
+      busy = true;
+      break;
+    case 'current':
+      tone = 'ok';
+      line = `Güncel — sürüm ${u.currentVersion}`;
+      break;
+    case 'available':
+      tone = 'warn';
+      line = `Yeni sürüm var: ${u.newVersion ?? ''}`;
+      note = 'İndirme arka planda başladı.';
+      break;
+    case 'downloading':
+      tone = 'warn';
+      busy = true;
+      line = `İndiriliyor… %${u.percent ?? 0}`;
+      note = 'Kafeyi bölmez, arka planda iner.';
+      break;
+    case 'downloaded':
+      tone = 'ok';
+      line = `${u.newVersion ?? 'Güncelleme'} indirildi`;
+      note = 'Uygulamadan çıkınca kendiliğinden kurulur. Şimdi kurmak isterseniz yeniden başlatın.';
+      break;
+    case 'error':
+      tone = 'bad';
+      line = 'Güncelleme denetlenemedi';
+      note = [u.detail, checked].filter(Boolean).join(' · ');
+      break;
+    default:
+      line = `Sürüm ${u.currentVersion}`;
+  }
+
+  dot.className = `update-dot ${busy ? 'busy' : tone}`.trim();
+  text.textContent = line;
+  detail.textContent = note;
+  detail.classList.toggle('hidden', note === '');
+
+  install.classList.toggle('hidden', u.phase !== 'downloaded');
+  download.classList.toggle('hidden', !(u.phase === 'unsupported' && Boolean(u.downloadUrl)));
+  // Nothing to re-check while a check or a download is already in flight, and
+  // nothing to check at all where updates do not apply.
+  check.disabled = u.phase === 'checking' || u.phase === 'downloading' || u.phase === 'unsupported';
+}
+
 bridge.onLogs(appendLogs);
 bridge.onStatus(render);
+bridge.onUpdate(renderUpdate);
 bridge.onUnauthorized(() => {
   setMsg($('pairMsg'), 'Bu cihazın yetkisi kaldırıldı. Panelden yeni bir kod alıp tekrar bağlayın.', 'bad');
 });
@@ -457,5 +569,11 @@ void (async () => {
   logEntries = await bridge.getLogs();
   renderLogs();
   await refreshPrinters();
+
+  // Ask on load rather than waiting for a push: the window can be closed and
+  // reopened long after the status last changed.
+  const update = await bridge.getUpdateStatus();
+  if (update.ok) renderUpdate(update.data);
+
   await bridge.probe();
 })();
