@@ -13,6 +13,10 @@ asarUnpack:
   # powershell.exe must read the script from disk — it cannot be inside the asar.
   - dist/main/assets/**
 
+# macOS only; the hook returns immediately on Windows. See the script for why an
+# unsigned mac build still has to be ad-hoc signed to launch at all.
+afterPack: scripts/adhoc-sign.mjs
+
 publish:
   provider: github
   owner: Ari-Cil-u-berg
@@ -57,17 +61,36 @@ nsis:
   installerLanguages: [tr_TR, en_US]
   language: 1055 # Turkish
 
-# macOS is PAUSED — no Developer ID certificate yet. The configuration stays so
-# that `dist:mac` still produces a local build for testing, but CI does not ship
-# it: an un-notarized DMG on macOS 15 is not "shows a warning", it is "refuses to
-# open", and a café cannot right-click-Open its way out of that reliably.
+# macOS ships UNSIGNED, deliberately and temporarily — no Developer ID
+# certificate yet.
+#
+# `identity: null` is load-bearing, not a shortcut. Left unset, electron-builder
+# picks whatever certificate the build machine happens to hold, and the only one
+# on ours is an *Apple Development* certificate. That combination — a Development
+# identity plus `hardenedRuntime` plus no notarization ticket — is the one macOS
+# treats worst: Gatekeeper does not warn, it reports the app as damaged and
+# refuses to launch, with no way through. Ad-hoc signing is genuinely better
+# here, because "unidentified developer" is a dialog the user can clear from
+# System Settings, and "damaged" is not.
+#
+# hardenedRuntime is off for the same reason: it only buys anything alongside a
+# notarization ticket, and without one it merely closes the escape hatch.
+#
+# The trade is real. The first launch costs the café a trip through Privacy &
+# Security → "Yine de Aç", and macOS auto-update is off (see src/main/updater.ts
+# — Squirrel.Mac verifies the signature of the downloaded build, so an unsigned
+# app cannot update itself). Both disappear the day a Developer ID certificate
+# exists: set `identity` to it, `hardenedRuntime: true`, `notarize: true`, add
+# CSC_LINK + the notary secrets, and drop the darwin guard in the updater.
 mac:
   target:
     - target: dmg
       arch: [universal]
   category: public.app-category.business
   icon: build/icon.png # electron-builder derives the .icns
-  hardenedRuntime: true
+  identity: null
+  hardenedRuntime: false
+  notarize: false
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist

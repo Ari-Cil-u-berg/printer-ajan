@@ -2,11 +2,14 @@ name: release
 
 # Tag a version to cut a release.
 #
-# WINDOWS ONLY, for now, and unsigned. Signing needs an OV/EV certificate we do
-# not have yet; the installer works without one, it just makes SmartScreen warn
-# on first run (the download page explains that). macOS is a different problem:
-# an un-notarized DMG does not warn, it refuses to open, so shipping one would
-# be worse than shipping nothing. `npm run dist:mac` still builds locally.
+# Both platforms ship UNSIGNED, for now. Windows needs an OV/EV certificate and
+# macOS a Developer ID; we hold neither. The installers work without them, at the
+# cost of one warning the user has to clear on first run — SmartScreen on
+# Windows, "unidentified developer" on macOS. The download page explains both.
+#
+# The two jobs write to the same GitHub Release. Only Windows publishes an
+# update feed (latest.yml); macOS deliberately does not, because an unsigned mac
+# app cannot install its own updates (see the mac: block in electron-builder.yml).
 on:
   push:
     tags: ['v*']
@@ -52,3 +55,41 @@ jobs:
             throw "latest.yml missing — electron-updater would have no feed to read"
           }
           Get-Content release/latest.yml
+
+  macos:
+    # Windows, not test: the Windows job is what electron-builder's publish step
+    # creates the GitHub Release with, and `gh release upload` below needs it to
+    # already exist.
+    needs: windows
+    runs-on: macos-14 # arm64 runner; the target is a universal binary either way
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+
+      # CSC_IDENTITY_AUTO_DISCOVERY=false keeps electron-builder from adopting a
+      # certificate that happens to be in the runner keychain. electron-builder.yml
+      # already pins `identity: null`; this is the belt to that suspenders, because
+      # a half-signed mac build fails closed — macOS calls it damaged and refuses
+      # to launch it, and nothing before the café's first double-click would catch it.
+      - name: Build the DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist:mac -- --publish never
+
+      # latest-mac.yml must NOT reach the release. If it does, every mac client
+      # starts downloading updates it can never install.
+      - name: Verify the build is ad-hoc signed and carries no update feed
+        run: |
+          set -euo pipefail
+          app="$(find release -maxdepth 2 -name '*.app' -print -quit)"
+          test -n "$app" || { echo "no .app in release/"; exit 1; }
+          codesign -dvv "$app" 2>&1 | tee /dev/stderr | grep -q 'Signature=adhoc' \
+            || { echo "expected an ad-hoc signature — refusing to ship a half-signed build"; exit 1; }
+          rm -f release/latest-mac.yml
+
+      - name: Attach the DMG to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" release/*.dmg --clobber

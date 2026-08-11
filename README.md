@@ -127,7 +127,7 @@ unmappable, text folds to an ASCII lookalike rather than printing `?`.
 
 ```bash
 npm run pack               # unpacked production build, local smoke test
-npm run dist:mac           # signed + notarized dmg (needs Developer ID certs)
+npm run dist:mac           # universal dmg, unsigned (no Developer ID cert yet)
 npm run dist:win           # signed NSIS installer (needs OV/EV cert; run on Windows)
 npm run dist:staging:win   # staging installer, no publish
 npm run dist:staging:mac   # staging dmg, no publish
@@ -138,7 +138,8 @@ installer always knows which backend it belongs to.
 
 Releases are cut by CI ([.github/workflows/release.yml](.github/workflows/release.yml)) on a
 `v*` tag: a Windows runner builds the NSIS installer and publishes it to GitHub
-Releases, which is also the `electron-updater` feed.
+Releases, which is also the `electron-updater` feed; a macOS runner then attaches the
+universal DMG to the same release.
 
 **Windows ships unsigned for now.** SmartScreen shows "unknown publisher" on first run
 — the download page has to say so. `win.verifyUpdateCodeSignature` is therefore `false`:
@@ -146,12 +147,24 @@ with nothing signed there is no publisher for the updater to match, and the defa
 would make every auto-update fail. Updates are still authenticated by TLS to GitHub and
 the SHA-512 in `latest.yml`.
 
-**macOS is paused.** An un-notarized DMG on current macOS does not warn, it refuses to
-open. `npm run dist:mac` still builds locally for testing; CI does not publish it.
+**macOS ships unsigned too**, and the config pins that on purpose: `mac.identity` is
+`null` and `hardenedRuntime` is off. Signing with the *Apple Development* certificate we
+happen to hold would be worse than not signing at all — a Development identity with no
+notarization ticket makes macOS report the app as damaged and refuse to launch it, with
+no way through. Ad-hoc signed, the café clears one "unidentified developer" dialog from
+System Settings → Privacy & Security and the app runs.
 
-To sign later: add `CSC_LINK` / `CSC_KEY_PASSWORD` to the repository secrets, set
-`verifyUpdateCodeSignature: true`, and restore the macOS job with `MAC_CSC_LINK`,
-`MAC_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`.
+The cost is that **macOS has no auto-update**: Squirrel.Mac verifies the signature of the
+build it downloaded, so an unsigned app can never install its own update.
+[src/main/updater.ts](src/main/updater.ts) skips the check on `darwin` rather than
+re-downloading 180 MB six times a day to discard it, and CI does not publish a
+`latest-mac.yml`. Mac users update by downloading the new DMG.
+
+To sign later: add `CSC_LINK` / `CSC_KEY_PASSWORD` to the repository secrets and set
+`win.verifyUpdateCodeSignature: true`; for macOS add a Developer ID to `mac.identity`
+with `hardenedRuntime: true` and `notarize: true`, supply `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, drop `CSC_IDENTITY_AUTO_DISCOVERY=false`
+from the macOS job, and remove the `darwin` guard in the updater.
 
 ## Security notes
 
