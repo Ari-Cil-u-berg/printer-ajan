@@ -3,7 +3,7 @@
  * through the `agent` bridge exposed by the preload.
  */
 
-type Station = 'BAR' | 'KITCHEN';
+type Station = 'BAR' | 'KITCHEN' | 'CASHIER';
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 type AppEnv = 'development' | 'staging' | 'production';
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -65,8 +65,8 @@ interface AgentBridge {
 
 const bridge = (window as unknown as { agent: AgentBridge }).agent;
 
-const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak' };
-const STATIONS: Station[] = ['BAR', 'KITCHEN'];
+const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak', CASHIER: 'Kasa' };
+const STATIONS: Station[] = ['BAR', 'KITCHEN', 'CASHIER'];
 const CODEPAGE_OPTIONS = ['CP857', 'ISO8859_9', 'CP1254', 'CP850', 'CP437'];
 const STATE_TEXT = {
   CONNECTED: ['Bağlı', 'ok'],

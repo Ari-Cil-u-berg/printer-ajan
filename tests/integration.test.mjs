@@ -46,7 +46,8 @@ async function startGateway({ port = 0, acceptToken = TOKEN, codeUsed = false } 
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(payload));
       };
-      if (req.url === '/agent/pair') {
+      // Same versioned path the real API serves (`src/main/pairing.ts`).
+      if (req.url === '/api/v1/agent/pair') {
         if (body.code !== CODE) return send(404, { message: 'invalid' });
         if (state.used) return send(409, { message: 'used' });
         state.used = true;

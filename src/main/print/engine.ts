@@ -40,7 +40,8 @@ export class PrintEngine {
   async testPrint(station: Station): Promise<void> {
     const printer = this.getPrinter(station);
     if (!printer) throw new PrinterNotConfiguredError(station);
-    await this.send(printer, renderTestTicket(printer, station === 'BAR' ? 'BAR' : 'MUTFAK'));
+    const heading = { BAR: 'BAR', KITCHEN: 'MUTFAK', CASHIER: 'KASA' }[station];
+    await this.send(printer, renderTestTicket(printer, heading));
   }
 
   private async send(printer: PrinterConfig, bytes: Buffer): Promise<void> {

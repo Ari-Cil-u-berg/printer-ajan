@@ -1,4 +1,6 @@
-export type Station = 'BAR' | 'KITCHEN';
+/** Mirrors the backend's `Station` enum — a value it can send that we cannot
+ *  route would sit DISPATCHED and be redelivered forever. */
+export type Station = 'BAR' | 'KITCHEN' | 'CASHIER';
 
 export type AppEnv = 'development' | 'staging' | 'production';
 

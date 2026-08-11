@@ -18,7 +18,7 @@ async function guard<T>(fn: () => Promise<T> | T): Promise<Result<T>> {
   }
 }
 
-const STATIONS: Station[] = ['BAR', 'KITCHEN'];
+const STATIONS: Station[] = ['BAR', 'KITCHEN', 'CASHIER'];
 
 /** C0 controls and DEL — never part of a printer name, always part of a probe. */
 function hasControlChars(value: string): boolean {

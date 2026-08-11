@@ -29,7 +29,8 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify(payload));
     };
 
-    if (req.url === '/agent/pair' && req.method === 'POST') {
+    // Paths mirror the real API: URI-versioned behind the global prefix.
+    if (req.url === '/api/v1/agent/pair' && req.method === 'POST') {
       if (body.code !== PAIRING_CODE) return send(404, { message: 'invalid code' });
       if (codeUsed) return send(409, { message: 'code already used' });
       codeUsed = true;
@@ -46,12 +47,12 @@ const server = http.createServer((req, res) => {
       });
     }
 
-    if (req.url === '/agent/heartbeat' && req.method === 'POST') {
+    if (req.url === '/api/v1/agent/heartbeat' && req.method === 'POST') {
       console.log('[heartbeat]', body.appVersion);
       return send(200, { ok: true });
     }
 
-    if (req.url?.startsWith('/agent/latest')) {
+    if (req.url?.startsWith('/api/v1/agent/latest')) {
       return send(200, { version: '0.1.0', url: 'https://example.invalid/installer', sha256: 'deadbeef' });
     }
 

@@ -10,7 +10,7 @@ const TR_TITLE: Record<TicketModel['kind'], string> = {
   CANCELLATION: '*** İPTAL ***',
 };
 
-const STATION_TITLE = { BAR: 'BAR', KITCHEN: 'MUTFAK' } as const;
+const STATION_TITLE = { BAR: 'BAR', KITCHEN: 'MUTFAK', CASHIER: 'KASA' } as const;
 
 /**
  * Encodes text to the printer's code page. CP857 covers Turkish (ç ğ ı ş ö ü İ).

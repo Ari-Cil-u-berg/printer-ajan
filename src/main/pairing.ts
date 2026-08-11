@@ -2,6 +2,22 @@ import os from 'node:os';
 import type { DeviceInfo, PairResponse } from '../shared/types';
 import { log } from './logger';
 
+/**
+ * The API is URI-versioned behind its global prefix, so the real path carries
+ * `/api/v1`. Pinned here rather than folded into `apiBaseUrl`: when the backend
+ * ships a v2, an agent already installed on a till must keep speaking v1 until
+ * someone has checked the response shape — not silently follow whatever is
+ * newest the moment it is deployed.
+ *
+ * The WebSocket is NOT versioned this way: an upgrade never reaches the router,
+ * so the gateway owns the bare path `/agent`.
+ */
+const API_PREFIX = '/api/v1';
+
+function endpoint(apiBaseUrl: string, path: string): string {
+  return `${apiBaseUrl.replace(/\/$/, '')}${API_PREFIX}${path}`;
+}
+
 export function deviceInfo(appVersion: string, deviceName?: string): DeviceInfo {
   return {
     hostname: deviceName || os.hostname(),
@@ -24,7 +40,7 @@ export async function pair(
   const normalized = code.trim().toUpperCase().replace(/[\s-]/g, '');
   if (normalized.length < 6) throw new Error('Eşleştirme kodu en az 6 karakter olmalı');
 
-  const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/agent/pair`, {
+  const res = await fetch(endpoint(apiBaseUrl, '/agent/pair'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: normalized, deviceInfo: info }),
@@ -43,7 +59,12 @@ export async function pair(
 }
 
 function pairingError(status: number, detail: string): string {
-  if (status === 404 || status === 400) return 'Kod geçersiz. Panelden yeni bir kod alın.';
+  // 401 is what the backend answers for wrong, expired and already-used alike —
+  // deliberately one message, so a stranger cannot learn which of the three it
+  // was and keep guessing.
+  if (status === 401 || status === 404 || status === 400) {
+    return 'Kod geçersiz veya süresi dolmuş. Panelden yeni bir kod alın.';
+  }
   if (status === 410) return 'Kodun süresi doldu (15 dk). Panelden yeni bir kod alın.';
   if (status === 409) return 'Bu kod zaten kullanılmış. Panelden yeni bir kod alın.';
   if (status === 429) return 'Çok fazla deneme. Birkaç dakika sonra tekrar deneyin.';
@@ -53,7 +74,7 @@ function pairingError(status: number, detail: string): string {
 /** Best-effort liveness ping; failures are non-fatal (the WS is the real signal). */
 export async function heartbeat(apiBaseUrl: string, token: string, appVersion: string): Promise<void> {
   try {
-    await fetch(`${apiBaseUrl.replace(/\/$/, '')}/agent/heartbeat`, {
+    await fetch(endpoint(apiBaseUrl, '/agent/heartbeat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ appVersion }),

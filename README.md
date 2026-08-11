@@ -137,12 +137,21 @@ Every `dist:*` script bakes its environment into `dist/main/build-env.json` firs
 installer always knows which backend it belongs to.
 
 Releases are cut by CI ([.github/workflows/release.yml](.github/workflows/release.yml)) on a
-`v*` tag: a Windows runner signs the NSIS installer, a macOS runner signs and notarizes
-the DMG, both publish to GitHub Releases, which is also the `electron-updater` feed.
+`v*` tag: a Windows runner builds the NSIS installer and publishes it to GitHub
+Releases, which is also the `electron-updater` feed.
 
-Required secrets: `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`, `MAC_CSC_LINK`,
+**Windows ships unsigned for now.** SmartScreen shows "unknown publisher" on first run
+— the download page has to say so. `win.verifyUpdateCodeSignature` is therefore `false`:
+with nothing signed there is no publisher for the updater to match, and the default
+would make every auto-update fail. Updates are still authenticated by TLS to GitHub and
+the SHA-512 in `latest.yml`.
+
+**macOS is paused.** An un-notarized DMG on current macOS does not warn, it refuses to
+open. `npm run dist:mac` still builds locally for testing; CI does not publish it.
+
+To sign later: add `CSC_LINK` / `CSC_KEY_PASSWORD` to the repository secrets, set
+`verifyUpdateCodeSignature: true`, and restore the macOS job with `MAC_CSC_LINK`,
 `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`.
-Unsigned installers trigger SmartScreen/Gatekeeper warnings — budget for the certs.
 
 ## Security notes
 

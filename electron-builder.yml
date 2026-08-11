@@ -24,7 +24,24 @@ win:
     - target: nsis
       arch: [x64]
   icon: build/icon.png # electron-builder derives the .ico
-  # Signing comes from CSC_LINK / CSC_KEY_PASSWORD (or an EV token) in CI.
+
+  # UNSIGNED, deliberately and temporarily.
+  #
+  # electron-builder signs only when CSC_LINK is present, so leaving the secret
+  # unset already produces an unsigned installer. The line that matters is the
+  # next one: electron-updater refuses an update whose signature does not match
+  # the installed app's publisher, and with nothing signed there is no publisher
+  # to match — so with the default `true`, every auto-update would fail on
+  # Windows with "publisher name mismatch" and cafés would silently stop
+  # receiving fixes.
+  #
+  # The trade is real: an unsigned update is authenticated by TLS to GitHub plus
+  # the SHA-512 in latest.yml, and no longer by the OS. That is the same trust
+  # the first download already relies on. Flip this back to true the day a
+  # certificate exists, in the same commit that adds CSC_LINK.
+  verifyUpdateCodeSignature: false
+
+  # Kept ready for that day; harmless while unsigned.
   signtoolOptions:
     signingHashAlgorithms: [sha256]
     rfc3161TimeStampServer: http://timestamp.digicert.com
@@ -40,6 +57,10 @@ nsis:
   installerLanguages: [tr_TR, en_US]
   language: 1055 # Turkish
 
+# macOS is PAUSED — no Developer ID certificate yet. The configuration stays so
+# that `dist:mac` still produces a local build for testing, but CI does not ship
+# it: an un-notarized DMG on macOS 15 is not "shows a warning", it is "refuses to
+# open", and a café cannot right-click-Open its way out of that reliably.
 mac:
   target:
     - target: dmg
