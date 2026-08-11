@@ -15,8 +15,8 @@ asarUnpack:
 
 publish:
   provider: github
-  owner: ari-adisyon
-  repo: ari-adisyon-ajan
+  owner: Ari-Cil-u-berg
+  repo: printer-ajan
   releaseType: release
 
 win:

@@ -411,36 +411,34 @@ Bu oturumda GitHub kimlik doğrulaması yok, o yüzden push yapılmadı. Sen şu
 
 ```bash
 cd ari-adisyon-ajan
-
-# 1. GitHub'a giriş (bir kez)
-gh auth login
-
-# 2. Repoyu oluştur ve push et — private olarak
-gh repo create ari-adisyon-ajan --private --source=. --remote=origin --push
-
-# gh kullanmak istemezsen: repoyu web'den aç, sonra
-#   git remote add origin git@github.com:<owner>/ari-adisyon-ajan.git
-#   git push -u origin main
+git remote add origin https://github.com/Ari-Cil-u-berg/printer-ajan.git
+git push -u origin main
 ```
 
-`--private` bilinçli: ticari kod, `UNLICENSED` lisans, ve auto-update feed'i public repo
-gerektirmiyor (`electron-updater` private repo ile de çalışır, ama o zaman indirme
-linklerinin token'la sunulması gerekir — public release varlıkları daha basittir. Karar
-senin).
+Repo adı klasör adıyla aynı olmak zorunda değil: yerelde `ari-adisyon-ajan`, GitHub'da
+`Ari-Cil-u-berg/printer-ajan`. Git için önemli olan tek şey remote URL'i.
 
-**Push'tan hemen sonra düzeltilmesi gereken bir satır var:**
+Repo **private**. Bunun bir sonucu var ve önemli:
 
 ```yaml
-# electron-builder.yml
+# electron-builder.yml — release'lerin yükleneceği ve updater'ın bakacağı yer
 publish:
   provider: github
-  owner: ariadisyon          # ← gerçek GitHub org/kullanıcı adın ne ise o olmalı
-  repo: ari-adisyon-ajan
+  owner: Ari-Cil-u-berg
+  repo: printer-ajan
 ```
 
-Backend repon `Ari-Cil-u-berg/ari-adisyon` altında. `owner` yanlışsa auto-update
-sessizce 404 alır — uygulama çalışır ama **hiçbir zaman güncellenmez**. Repoyu açtıktan
-sonra bu iki satırı gerçek değerlerle güncelle.
+`electron-updater` bu adrese doğrudan bağlanır. Private repo'nun release dosyaları
+token ister; o token'ı installer'ın içine koymak, onu kuran herkese vermek demektir.
+Yani **private release repo = otomatik güncelleme yok**. İki çıkış yolu:
+
+- Release'leri ayrı bir **public** repoya yayınla (`publish.repo` orayı gösterir,
+  kaynak private kalır), veya
+- bu repoyu public yap.
+
+Sitedeki indirme düğmesi her iki durumda da çalışır — private repoda site,
+`AGENT_RELEASE_TOKEN` ile her tıklamada kısa ömürlü imzalı bir bağlantı üretir. Sorun
+yalnızca uygulamanın kendi kendini güncellemesinde.
 
 ### 4.7 CI zaten hazır
 
@@ -461,9 +459,9 @@ parçası.
 
 ## 5. Sürüm çıkarma ve sitedeki indirme düğmeleri
 
-### `gh repo create ... --push` ne gönderir?
+### `git push` ne gönderir?
 
-**Sadece kaynak kodu.** `github.com/<hesabın>/ari-adisyon-ajan` altına `.ts` dosyaları,
+**Sadece kaynak kodu.** `github.com/Ari-Cil-u-berg/printer-ajan` altına `.ts` dosyaları,
 `package.json`, workflow'lar gider. `.gitignore` sayesinde `node_modules/`, `dist/` ve
 `release/` gitmez.
 
@@ -567,7 +565,7 @@ güncelleme almaz.
 `apps/web/.env`:
 
 ```bash
-AGENT_RELEASE_REPO="<hesabın>/ari-adisyon-ajan"
+AGENT_RELEASE_REPO="Ari-Cil-u-berg/printer-ajan"
 # yalnızca repo private ise:
 # AGENT_RELEASE_TOKEN="github_pat_..."
 ```

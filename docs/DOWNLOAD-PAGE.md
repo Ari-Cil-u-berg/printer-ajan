@@ -58,7 +58,8 @@ When a release carries several builds for one OS, the site prefers
 
 ## Repository visibility
 
-`AGENT_RELEASE_REPO` (`owner/repo`) tells the site where to look. Two cases:
+`AGENT_RELEASE_REPO` (`owner/repo`, currently `Ari-Cil-u-berg/printer-ajan`) tells the
+site where to look. Two cases:
 
 - **Public repo** — the button redirects to the permanent asset URL. `electron-updater`
   works out of the box.
