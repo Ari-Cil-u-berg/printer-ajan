@@ -1,6 +1,7 @@
 /**
- * Settings window. Plain script (no bundler): talks to the main process only
- * through the `agent` bridge exposed by the preload.
+ * Ayar penceresi. Bundler yok: düz betik, ana süreçle yalnızca preload'un
+ * açtığı `agent` köprüsü üzerinden konuşur. Tipler bu yüzden burada tekrar
+ * tanımlanıyor — `import` edecek bir modül yükleyici yok.
  */
 
 type Station = 'BAR' | 'KITCHEN' | 'CASHIER';
@@ -18,6 +19,32 @@ interface PrinterConfig {
   width: 32 | 42 | 48;
   cut: boolean;
 }
+
+interface OkcConfig { host: string; port: number; fingerprint?: string; label?: string }
+interface OkcHealth {
+  configured: boolean;
+  ok?: boolean;
+  state?: string;
+  hasOpenDocument?: boolean;
+  pendingSale?: string;
+  error?: string;
+  checkedAt?: string;
+}
+interface BridgePairing {
+  deviceId: string
+  terminalId: string
+  terminalLabel: string
+  tenantName: string
+}
+interface OkcSaleResult {
+  saleId: string;
+  status: 'APPROVED' | 'DECLINED' | 'UNKNOWN';
+  receiptNo?: string;
+  documentId?: string;
+  error?: string;
+  code?: string;
+}
+
 interface StatusSnapshot {
   connection: 'OFFLINE' | 'CONNECTING' | 'CONNECTED' | 'UNPAIRED';
   paired: boolean;
@@ -33,7 +60,13 @@ interface StatusSnapshot {
   lastJob?: { jobId: string; station: Station; status: string; at: string; error?: string };
   printers: Partial<Record<Station, PrinterConfig>>;
   printerHealth: Partial<Record<Station, { ok: boolean; checkedAt: string; error?: string }>>;
+  okc?: OkcConfig;
+  okcHealth: OkcHealth;
+  lastSale?: OkcSaleResult & { at: string };
+  bridge?: BridgePairing;
+  bridgeConnected: boolean;
 }
+
 interface DiscoveredPrinter {
   kind: 'spooler' | 'network';
   label: string;
@@ -41,6 +74,7 @@ interface DiscoveredPrinter {
   host?: string;
   port?: number;
 }
+
 type UpdatePhase =
   | 'unsupported' | 'idle' | 'checking' | 'current'
   | 'available' | 'downloading' | 'downloaded' | 'error';
@@ -66,6 +100,12 @@ interface AgentBridge {
   setPrinter(station: Station, printer: PrinterConfig | null): Promise<Result<StatusSnapshot>>;
   testPrint(station: Station): Promise<Result<boolean>>;
   probe(): Promise<Result<StatusSnapshot>>;
+  setOkc(config: OkcConfig | null): Promise<Result<StatusSnapshot>>;
+  testOkc(): Promise<Result<OkcHealth>>;
+  retryOkc(): Promise<Result<OkcSaleResult | null>>;
+  cancelOkc(): Promise<Result<{ ok: boolean; error?: string }>>;
+  pairBridge(code: string): Promise<Result<StatusSnapshot>>;
+  unpairBridge(): Promise<Result<StatusSnapshot>>;
   setAutostart(enabled: boolean): Promise<Result<StatusSnapshot>>;
   setDeviceName(name: string): Promise<Result<StatusSnapshot>>;
   checkUpdates(): Promise<Result<UpdateStatus>>;
@@ -98,7 +138,7 @@ const ENV_LABEL: Record<AppEnv, string> = {
   production: 'Canlı',
 };
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-/** Keep the DOM bounded — the main process buffer is the real scrollback. */
+/** DOM'u sınırlı tut — asıl kaydırma tamponu ana süreçte. */
 const LOG_VIEW_MAX = 1000;
 
 let discovered: DiscoveredPrinter[] = [];
@@ -112,39 +152,288 @@ function setMsg(el: HTMLElement, text: string, kind: 'ok' | 'bad' | '' = ''): vo
   el.className = `msg${kind ? ` ${kind}` : ''}`;
 }
 
-// --- rendering -------------------------------------------------------------
+function timeOf(iso: string | undefined): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+}
+
+// --- gezinme ---------------------------------------------------------------
+
+/**
+ * Sekmeler. Panel değiştirmek DOM'u yeniden kurmaz, yalnızca görünürlüğü
+ * değiştirir: günlük görüntüleyicinin kaydırma konumu ve yazıcı formlarındaki
+ * yazılmış ama kaydedilmemiş değerler sekme değişince kaybolmamalı.
+ */
+function showPanel(name: string): void {
+  document.querySelectorAll<HTMLElement>('.navitem').forEach((item) => {
+    item.classList.toggle('is-active', item.dataset['panel'] === name);
+  });
+  document.querySelectorAll<HTMLElement>('.panel').forEach((panel) => {
+    panel.classList.toggle('is-active', panel.dataset['panel'] === name);
+  });
+}
+
+document.querySelectorAll<HTMLElement>('.navitem').forEach((item) => {
+  item.addEventListener('click', () => showPanel(item.dataset['panel'] ?? 'status'));
+});
+
+// --- çizim -----------------------------------------------------------------
 
 function render(s: StatusSnapshot): void {
   currentStatus = s;
+
+  // Eşleşmemiş bir ajanda ayarların anlamı yok; kurulum ekranı tek başına durur.
+  $('onboarding').classList.toggle('hidden', s.paired);
+  $('app').classList.toggle('hidden', !s.paired);
+  $('obVersion').textContent = s.appVersion;
+  $('obEnv').textContent = ENV_LABEL[s.env];
+
   const [text, cls] = STATE_TEXT[s.connection];
   $('stateText').textContent = text;
   $('dot').className = `dot ${cls}`;
-  $('sConn').textContent = text;
-  $('sQueue').textContent = String(s.queued);
-  $('sVersion').textContent = s.appVersion;
-  $('sEnv').textContent = `${ENV_LABEL[s.env]} · ${s.apiBaseUrl}`;
+
+  $('place').textContent = s.paired && s.branchName
+    ? `${s.tenantName ?? ''} — ${s.branchName}`
+    : 'Henüz eşleştirilmedi';
+  $('deviceLine').textContent = `${s.deviceName} · sürüm ${s.appVersion}`;
 
   const badge = $('envBadge');
-  badge.classList.toggle('hidden', s.env === 'production');
-  badge.textContent = s.env.toUpperCase();
   badge.className = `env ${s.env}${s.env === 'production' ? ' hidden' : ''}`;
-  $('place').textContent = s.paired && s.branchName ? `${s.tenantName ?? ''} — ${s.branchName}` : 'Henüz eşleştirilmedi';
+  badge.textContent = s.env.toUpperCase();
+
+  renderMetrics(s);
+  renderStatusPanel(s);
+  renderStations(s);
+  renderOkc(s);
+}
+
+/**
+ * Üç ölçü: kuyruk, yazıcılar, yazarkasa.
+ *
+ * Ekranın açılışta cevapladığı soru "her şey yolunda mı?" — o cevabı bulmak
+ * için üç sekmeyi gezmek gerekiyorsa, kimse gezmez ve sorun ancak servis
+ * sırasında fark edilir.
+ */
+function renderMetrics(s: StatusSnapshot): void {
+  $('sQueue').textContent = String(s.queued);
+  $('sQueue').className = `metric-value${s.queued > 0 ? ' warn' : ''}`;
+
+  const configured = STATIONS.filter((st) => s.printers[st]);
+  const healthy = configured.filter((st) => s.printerHealth[st]?.ok);
+  const printerEl = $('sPrinters');
+  if (configured.length === 0) {
+    printerEl.textContent = 'Seçilmedi';
+    printerEl.className = 'metric-value warn';
+  } else {
+    printerEl.textContent = `${healthy.length}/${configured.length} hazır`;
+    printerEl.className = `metric-value ${healthy.length === configured.length ? 'ok' : 'bad'}`;
+  }
+  navDot('navDotPrinters', configured.length === 0 ? 'warn' : healthy.length === configured.length ? 'ok' : 'bad');
+
+  const okcEl = $('sOkc');
+  const h = s.okcHealth;
+  if (!h.configured) {
+    okcEl.textContent = 'Yok';
+    okcEl.className = 'metric-value';
+    navDot('navDotOkc', '');
+  } else if (h.pendingSale) {
+    okcEl.textContent = 'Bekleyen fiş';
+    okcEl.className = 'metric-value bad';
+    navDot('navDotOkc', 'bad');
+  } else if (h.ok) {
+    okcEl.textContent = h.hasOpenDocument ? 'Açık belge' : 'Hazır';
+    okcEl.className = `metric-value ${h.hasOpenDocument ? 'warn' : 'ok'}`;
+    navDot('navDotOkc', h.hasOpenDocument ? 'warn' : 'ok');
+  } else {
+    okcEl.textContent = 'Ulaşılamıyor';
+    okcEl.className = 'metric-value bad';
+    navDot('navDotOkc', 'bad');
+  }
+
+  navDot('navDotStatus', s.connection === 'CONNECTED' ? 'ok' : s.connection === 'CONNECTING' ? 'warn' : 'bad');
+}
+
+function navDot(id: string, tone: string): void {
+  $(id).className = `navdot${tone ? ` ${tone}` : ''}`;
+}
+
+function renderStatusPanel(s: StatusSnapshot): void {
+  $('sEnv').textContent = `${ENV_LABEL[s.env]} · ${s.apiBaseUrl}`;
+  $('pairedPlace').textContent = s.paired
+    ? `${s.tenantName ?? ''} / ${s.branchName ?? ''}`
+    : '—';
 
   $('sLast').textContent = s.lastJob
     ? `${STATION_LABEL[s.lastJob.station]} · ${s.lastJob.status}${s.lastJob.error ? ` (${s.lastJob.error})` : ''}`
     : '—';
 
+  $('sLastSale').textContent = s.lastSale ? saleLine(s.lastSale) : '—';
+
   const nameInput = $<HTMLInputElement>('deviceName');
   if (document.activeElement !== nameInput) nameInput.value = s.deviceName;
-
   $<HTMLInputElement>('autostart').checked = s.autostart;
-
-  $('pairedBox').classList.toggle('hidden', !s.paired);
-  $('pairCard').querySelector('.row')?.classList.toggle('hidden', s.paired);
-  $('pairedPlace').textContent = `${s.tenantName ?? ''} / ${s.branchName ?? ''}`;
-
-  renderStations(s);
 }
+
+/** `UNKNOWN` ayrı yazılır: "başarısız" demek, çekilmiş olabilecek parayı yok saymaktır. */
+function saleLine(sale: OkcSaleResult & { at: string }): string {
+  const when = timeOf(sale.at);
+  switch (sale.status) {
+    case 'APPROVED':
+      return `${when} · Fiş ${sale.receiptNo ?? '—'}`;
+    case 'DECLINED':
+      return `${when} · Kesilmedi${sale.error ? ` — ${sale.error}` : ''}`;
+    default:
+      return `${when} · Sonuç belirsiz${sale.error ? ` — ${sale.error}` : ''}`;
+  }
+}
+
+// --- yazarkasa -------------------------------------------------------------
+
+function renderOkc(s: StatusSnapshot): void {
+  const hostInput = $<HTMLInputElement>('okcHost');
+  const portInput = $<HTMLInputElement>('okcPort');
+  const labelInput = $<HTMLInputElement>('okcLabel');
+
+  // Yazarken üstüne yazma — kullanıcı IP girerken durum yenilenirse alan
+  // sıfırlanmamalı.
+  if (document.activeElement !== hostInput) hostInput.value = s.okc?.host ?? '';
+  if (document.activeElement !== portInput) portInput.value = String(s.okc?.port ?? 4443);
+  if (document.activeElement !== labelInput) labelInput.value = s.okc?.label ?? '';
+
+  const h = s.okcHealth;
+  const stateEl = $('okcState');
+  if (!h.configured) {
+    stateEl.textContent = 'Tanımlanmadı';
+  } else if (h.ok) {
+    stateEl.textContent = `Bağlı${h.state ? ` (${h.state})` : ''}`;
+  } else {
+    stateEl.textContent = h.error ?? 'Ulaşılamıyor';
+  }
+
+  $('okcDoc').textContent = !h.configured ? '—' : h.hasOpenDocument ? 'Var' : 'Yok';
+  $('okcChecked').textContent = timeOf(h.checkedAt);
+
+  // Parmak izinin ilk 16 hanesi yeter: amaç okumak değil, "tanındı mı"
+  // sorusunu cevaplamak.
+  $('okcCert').textContent = s.okc?.fingerprint
+    ? `${s.okc.fingerprint.slice(0, 17)}…`
+    : 'Henüz tanınmadı';
+
+  // Köprü: satış emrinin geleceği kanal. Yazıcı bağlantısından AYRI bir soru —
+  // biri bağlıyken diğeri kopuk olabilir ve tek bir gösterge ikisini de yanlış
+  // anlatır.
+  $('bridgeState').textContent = !s.bridge
+    ? 'Eşleştirilmemiş'
+    : s.bridgeConnected
+      ? 'Bağlı'
+      : 'Bağlanıyor…'
+  $('bridgeTerminal').textContent = s.bridge
+    ? `${s.bridge.terminalLabel}${s.bridge.tenantName ? ` · ${s.bridge.tenantName}` : ''}`
+    : '—'
+  $('bridgePairRow').classList.toggle('hidden', Boolean(s.bridge))
+  $('bridgeUnpairRow').classList.toggle('hidden', !s.bridge)
+
+  const pending = Boolean(h.pendingSale);
+  $('okcPendingCard').classList.toggle('hidden', !pending);
+  if (pending) {
+    $('okcPendingText').textContent =
+      'Bu ajanda kapatılamamış bir mali belge var. Ödeme alınmış olabilir — önce "Tekrar dene" deneyin, fiş kesilmediyse iptal edin. Yeni satış başlatmayın.';
+  }
+}
+
+$('okcSaveBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('okcSaveBtn');
+  const msg = $('okcMsg');
+  btn.disabled = true;
+  setMsg(msg, 'Bağlanılıyor…');
+
+  const res = await bridge.setOkc({
+    host: $<HTMLInputElement>('okcHost').value.trim(),
+    port: Number($<HTMLInputElement>('okcPort').value) || 4443,
+    label: $<HTMLInputElement>('okcLabel').value.trim(),
+  });
+  btn.disabled = false;
+
+  if (!res.ok) return setMsg(msg, res.error, 'bad');
+  const h = res.data.okcHealth;
+  setMsg(
+    msg,
+    h.ok ? 'Yazarkasa bağlandı.' : h.error ?? 'Yazarkasaya ulaşılamadı.',
+    h.ok ? 'ok' : 'bad',
+  );
+});
+
+$('okcTestBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('okcTestBtn');
+  btn.disabled = true;
+  setMsg($('okcMsg'), 'Sınanıyor…');
+  const res = await bridge.testOkc();
+  btn.disabled = false;
+  if (!res.ok) return setMsg($('okcMsg'), res.error, 'bad');
+  setMsg(
+    $('okcMsg'),
+    res.data.ok ? `Cihaz yanıt verdi (${res.data.state ?? 'IDLE'}).` : res.data.error ?? 'Ulaşılamadı.',
+    res.data.ok ? 'ok' : 'bad',
+  );
+});
+
+$('okcClearBtn').addEventListener('click', async () => {
+  const res = await bridge.setOkc(null);
+  setMsg($('okcMsg'), res.ok ? 'Yazarkasa kaldırıldı.' : res.error, res.ok ? 'ok' : 'bad');
+});
+
+$('bridgePairBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('bridgePairBtn')
+  const input = $<HTMLInputElement>('bridgeCode')
+  btn.disabled = true
+  setMsg($('bridgeMsg'), 'Eşleştiriliyor…')
+  const res = await bridge.pairBridge(input.value)
+  btn.disabled = false
+  if (!res.ok) return setMsg($('bridgeMsg'), res.error, 'bad')
+  input.value = ''
+  setMsg($('bridgeMsg'), 'Eşleştirildi.', 'ok')
+  render(res.data)
+})
+
+$('bridgeCode').addEventListener('keydown', (e) => {
+  if ((e as KeyboardEvent).key === 'Enter') $('bridgePairBtn').click()
+})
+
+$('bridgeUnpairBtn').addEventListener('click', async () => {
+  const res = await bridge.unpairBridge()
+  if (!res.ok) return setMsg($('bridgeMsg'), res.error, 'bad')
+  setMsg($('bridgeMsg'), 'Eşleştirme kaldırıldı.')
+  render(res.data)
+})
+
+$('okcRetryBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('okcRetryBtn');
+  btn.disabled = true;
+  setMsg($('okcPendingMsg'), 'Fiş tekrar kapatılmaya çalışılıyor…');
+  const res = await bridge.retryOkc();
+  btn.disabled = false;
+  if (!res.ok) return setMsg($('okcPendingMsg'), res.error, 'bad');
+  if (!res.data) return setMsg($('okcPendingMsg'), 'Bekleyen belge bulunamadı.');
+  setMsg(
+    $('okcPendingMsg'),
+    res.data.status === 'APPROVED'
+      ? `Fiş kesildi: ${res.data.receiptNo ?? '—'}`
+      : res.data.error ?? 'Hâlâ kapatılamadı.',
+    res.data.status === 'APPROVED' ? 'ok' : 'bad',
+  );
+});
+
+$('okcCancelBtn').addEventListener('click', async () => {
+  const res = await bridge.cancelOkc();
+  if (!res.ok) return setMsg($('okcPendingMsg'), res.error, 'bad');
+  setMsg(
+    $('okcPendingMsg'),
+    res.data.ok ? 'Belge iptal edildi.' : res.data.error ?? 'İptal edilemedi.',
+    res.data.ok ? 'ok' : 'bad',
+  );
+});
+
+// --- yazıcılar -------------------------------------------------------------
 
 function renderStations(s: StatusSnapshot): void {
   const host = $('stations');
@@ -162,27 +451,40 @@ function stationCard(
   const card = document.createElement('div');
   card.className = 'station';
 
-  const badge = printer
-    ? health
-      ? health.ok ? '🟢 hazır' : `🔴 ${health.error ?? 'ulaşılamıyor'}`
-      : '⏳ denetleniyor'
-    : '⚪ seçilmedi';
   const title = document.createElement('h3');
-  title.textContent = `${STATION_LABEL[station]} yazıcısı — ${badge}`;
+  title.append(document.createTextNode(`${STATION_LABEL[station]} yazıcısı`));
+
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  const badgeDot = document.createElement('span');
+  const badgeText = document.createElement('span');
+  if (!printer) {
+    badgeDot.className = 'dot';
+    badgeText.textContent = 'Seçilmedi';
+  } else if (!health) {
+    badgeDot.className = 'dot warn';
+    badgeText.textContent = 'Denetleniyor…';
+  } else if (health.ok) {
+    badgeDot.className = 'dot ok';
+    badgeText.textContent = 'Hazır';
+  } else {
+    badgeDot.className = 'dot bad';
+    badgeText.textContent = health.error ?? 'Ulaşılamıyor';
+  }
+  badge.append(badgeDot, badgeText);
+  title.appendChild(badge);
   card.appendChild(title);
 
   const grid = document.createElement('div');
   grid.className = 'grid';
 
-  // Connection type
   const typeSelect = document.createElement('select');
-  for (const [value, label] of [['network', 'Ağ yazıcısı (IP)'], ['spooler', 'Bilgisayara kurulu yazıcı (USB)']]) {
-    typeSelect.append(new Option(label!, value!));
+  for (const [value, text] of [['network', 'Ağ yazıcısı (IP)'], ['spooler', 'Kurulu yazıcı (USB)']]) {
+    typeSelect.append(new Option(text!, value!));
   }
   typeSelect.value = printer?.target.kind ?? 'network';
   grid.append(label('Bağlantı'), typeSelect);
 
-  // Network fields
   const hostInput = document.createElement('input');
   hostInput.type = 'text';
   hostInput.placeholder = '192.168.1.50';
@@ -194,14 +496,12 @@ function stationCard(
   netRow.className = 'row';
   netRow.style.marginTop = '0';
   hostInput.style.flex = '1';
-  portInput.style.width = '90px';
   netRow.append(hostInput, portInput);
   const netLabel = label('IP ve port');
   grid.append(netLabel, netRow);
 
-  // Spooler field
   const spoolSelect = document.createElement('select');
-  const refreshSpoolOptions = () => {
+  const refreshSpoolOptions = (): void => {
     spoolSelect.innerHTML = '';
     const names = discovered.filter((d) => d.kind === 'spooler').map((d) => d.printerName!);
     const current = printer?.target.kind === 'spooler' ? printer.target.printerName : '';
@@ -214,7 +514,6 @@ function stationCard(
   const spoolLabel = label('Yazıcı');
   grid.append(spoolLabel, spoolSelect);
 
-  // Codepage + width + cut
   const cpSelect = document.createElement('select');
   for (const cp of CODEPAGE_OPTIONS) cpSelect.append(new Option(cp.replace('_', '-'), cp));
   cpSelect.value = printer?.codepage ?? 'CP857';
@@ -232,12 +531,13 @@ function stationCard(
   cutBox.checked = printer?.cut !== false;
   const cutWrap = document.createElement('label');
   cutWrap.className = 'check';
+  cutWrap.style.marginTop = '0';
   cutWrap.append(cutBox, document.createTextNode(' Fiş sonunda kağıdı kes'));
   grid.append(label('Kesici'), cutWrap);
 
   card.appendChild(grid);
 
-  const applyTypeVisibility = () => {
+  const applyTypeVisibility = (): void => {
     const isNet = typeSelect.value === 'network';
     netLabel.classList.toggle('hidden', !isNet);
     netRow.classList.toggle('hidden', !isNet);
@@ -258,15 +558,13 @@ function stationCard(
       typeSelect.value === 'network'
         ? { kind: 'network' as const, host: hostInput.value.trim(), port: Number(portInput.value) || 9100 }
         : { kind: 'spooler' as const, printerName: spoolSelect.value };
-    const cfg: PrinterConfig = {
+    const res = await bridge.setPrinter(station, {
       target,
       codepage: cpSelect.value,
       width: Number(widthSelect.value) as 32 | 42 | 48,
       cut: cutBox.checked,
-    };
-    const res = await bridge.setPrinter(station, cfg);
-    if (res.ok) setMsg(msg, 'Kaydedildi.', 'ok');
-    else setMsg(msg, res.error, 'bad');
+    });
+    setMsg(msg, res.ok ? 'Kaydedildi.' : res.error, res.ok ? 'ok' : 'bad');
   });
 
   const testBtn = document.createElement('button');
@@ -284,7 +582,7 @@ function stationCard(
   });
 
   const clearBtn = document.createElement('button');
-  clearBtn.className = 'ghost';
+  clearBtn.className = 'ghost danger';
   clearBtn.textContent = 'Kaldır';
   clearBtn.addEventListener('click', async () => {
     const res = await bridge.setPrinter(station, null);
@@ -304,7 +602,7 @@ function label(text: string): HTMLElement {
   return el;
 }
 
-// --- logs -------------------------------------------------------------------
+// --- günlükler -------------------------------------------------------------
 
 function logFilters(): { min: number; needle: string } {
   return {
@@ -373,7 +671,7 @@ async function copyLogs(): Promise<void> {
     await navigator.clipboard.writeText(text);
     setMsg($('logMsg'), 'Kopyalandı.', 'ok');
   } catch {
-    // file:// pages don't always get the async clipboard — fall back to a selection copy.
+    // `file://` sayfaları her zaman asenkron panoya erişemiyor — seçim yoluyla kopyala.
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
@@ -384,7 +682,7 @@ async function copyLogs(): Promise<void> {
   }
 }
 
-// --- wiring ----------------------------------------------------------------
+// --- bağlama ---------------------------------------------------------------
 
 async function refreshPrinters(): Promise<void> {
   const res = await bridge.listPrinters();
@@ -404,7 +702,7 @@ $('pairBtn').addEventListener('click', async () => {
   btn.disabled = false;
   if (res.ok) {
     input.value = '';
-    setMsg(msg, 'Bağlandı.', 'ok');
+    setMsg(msg, '');
     render(res.data);
   } else {
     setMsg(msg, res.error, 'bad');
@@ -451,15 +749,13 @@ $('updateBtn').addEventListener('click', async () => {
 
 $('updateInstallBtn').addEventListener('click', async () => {
   const res = await bridge.installUpdate();
-  if (!res.ok) {
-    $('updateDetail').textContent = res.error;
-  }
+  if (!res.ok) $('updateDetail').textContent = res.error;
 });
 
 $('updateDownloadBtn').addEventListener('click', () => {
   if (updateState?.downloadUrl) window.open(updateState.downloadUrl, '_blank');
 });
-$('logBtn').addEventListener('click', () => void bridge.openLog());
+
 $('hideBtn').addEventListener('click', () => void bridge.hide());
 
 $('logLevelFilter').addEventListener('change', renderLogs);
@@ -477,14 +773,14 @@ $('logClearBtn').addEventListener('click', async () => {
 let updateState: UpdateStatus | null = null;
 
 /**
- * One line that is always true, and buttons that only appear when they do
- * something.
+ * Her zaman doğru olan tek satır ve yalnızca bir işe yaradığında görünen
+ * düğmeler.
  *
- * The old screen had a "Güncellemeleri denetle" button that reported nothing at
- * all — a click looked identical whether the app was current, an update was
- * downloading, or the check had failed. Every phase below says which of those
- * it is, and `unsupported` says so plainly rather than spinning forever on a
- * macOS build that cannot update itself.
+ * Eski ekranda "Güncellemeleri denetle" hiçbir şey bildirmiyordu — tıklamak,
+ * uygulama güncelken de indirme sürerken de denetim başarısızken de aynı
+ * görünüyordu. Aşağıdaki her durum hangisi olduğunu söylüyor; `unsupported` da
+ * kendini imzasız macOS derlemesinde sonsuza kadar dönen bir çarkla değil,
+ * açıkça anlatıyor.
  */
 function renderUpdate(u: UpdateStatus): void {
   updateState = u;
@@ -495,9 +791,7 @@ function renderUpdate(u: UpdateStatus): void {
   const download = $('updateDownloadBtn');
   const check = $<HTMLButtonElement>('updateBtn');
 
-  const checked = u.checkedAt
-    ? `Son denetim: ${new Date(u.checkedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
-    : '';
+  const checked = u.checkedAt ? `Son denetim: ${timeOf(u.checkedAt)}` : '';
 
   let tone = '';
   let line = '';
@@ -549,8 +843,6 @@ function renderUpdate(u: UpdateStatus): void {
 
   install.classList.toggle('hidden', u.phase !== 'downloaded');
   download.classList.toggle('hidden', !(u.phase === 'unsupported' && Boolean(u.downloadUrl)));
-  // Nothing to re-check while a check or a download is already in flight, and
-  // nothing to check at all where updates do not apply.
   check.disabled = u.phase === 'checking' || u.phase === 'downloading' || u.phase === 'unsupported';
 }
 
@@ -564,14 +856,13 @@ bridge.onUnauthorized(() => {
 void (async () => {
   const status = await bridge.getStatus();
   render(status);
-  // Dev builds default the filter to debug — that's the point of running dev.
+  // Geliştirme derlemelerinde filtre debug'a düşer — dev çalıştırmanın amacı bu.
   if (status.env !== 'production') $<HTMLSelectElement>('logLevelFilter').value = 'debug';
   logEntries = await bridge.getLogs();
   renderLogs();
   await refreshPrinters();
 
-  // Ask on load rather than waiting for a push: the window can be closed and
-  // reopened long after the status last changed.
+  // Yüklenirken sor: pencere kapatılıp durum değiştikten çok sonra açılabilir.
   const update = await bridge.getUpdateStatus();
   if (update.ok) renderUpdate(update.data);
 

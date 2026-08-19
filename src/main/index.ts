@@ -142,14 +142,17 @@ export function showWindow(): void {
     return;
   }
   window = new BrowserWindow({
-    width: 720,
-    height: 760,
-    minWidth: 620,
+    // Ray + içerik düzeni 900'de rahat nefes alıyor. 720'de raylı düzenin
+    // daraltma kuralı devreye giriyordu, yani varsayılan pencere ürünün
+    // istisna görünümüyle açılıyordu.
+    width: 900,
+    height: 780,
+    minWidth: 560,
     minHeight: 600,
     title:
       env.env === 'production'
-        ? 'Ari Adisyon Yazıcı Ajanı'
-        : `Ari Adisyon Yazıcı Ajanı — ${env.env.toUpperCase()}`,
+        ? 'Ari Adisyon Ajanı'
+        : `Ari Adisyon Ajanı — ${env.env.toUpperCase()}`,
     autoHideMenuBar: true,
     show: false,
     webPreferences: {

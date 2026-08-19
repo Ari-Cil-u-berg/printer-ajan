@@ -3,6 +3,9 @@ import { STATIONS } from '../shared/types';
 import type {
   AgentConfig,
   ConnectionState,
+  BridgePairing,
+  OkcConfig,
+  OkcSaleResult,
   PrinterConfig,
   PrintJob,
   StatusSnapshot,
@@ -14,6 +17,8 @@ import { ConnectionManager } from './connection';
 import { envConfig } from './env';
 import { log } from './logger';
 import { deviceInfo, heartbeat, pair } from './pairing';
+import { BridgeLink, pairBridge } from './bridge/bridge-link';
+import { OkcManager } from './okc/okc';
 import { PrintEngine } from './print/engine';
 import { JobQueue } from './queue';
 
@@ -31,12 +36,19 @@ export class Agent extends EventEmitter {
   private probeTimer: NodeJS.Timeout | null = null;
   private lastJob: StatusSnapshot['lastJob'];
   private printerHealth: StatusSnapshot['printerHealth'] = {};
+  private lastSale: StatusSnapshot['lastSale'];
+  readonly okc: OkcManager;
+  private bridge: BridgeLink | null = null;
 
   constructor(private readonly appVersion: string) {
     super();
     this.config = new ConfigStore();
     this.engine = new PrintEngine((station) => this.config.get().printers[station]);
     this.queue = new JobQueue(this.config.dataDir(), (job) => this.engine.print(job));
+    this.okc = new OkcManager(this.config.dataDir(), this.config.get().okc, (okc) =>
+      this.config.update({ okc }),
+    );
+    this.okc.on('changed', () => this.emitStatus());
 
     this.queue.on('ack', (ack) => {
       this.lastJob = {
@@ -67,13 +79,17 @@ export class Agent extends EventEmitter {
   start(): void {
     setAutostart(this.config.get().autostart);
     this.queue.start();
+    this.okc.start();
     this.connectIfPaired();
+    void this.connectBridge();
     this.probeTimer = setInterval(() => void this.refreshPrinterHealth(), PROBE_INTERVAL_MS);
     void this.refreshPrinterHealth();
   }
 
   stop(): void {
     this.queue.stop();
+    this.okc.stop();
+    this.bridge?.stop();
     this.connection?.close();
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.probeTimer) clearInterval(this.probeTimer);
@@ -159,6 +175,97 @@ export class Agent extends EventEmitter {
     return cfg;
   }
 
+  private recordSale(result: OkcSaleResult): void {
+    this.lastSale = { ...result, at: new Date().toISOString() };
+    this.emitStatus();
+  }
+
+  // --- ödeme köprüsü ------------------------------------------------------
+
+  /**
+   * Köprüyü açar. Eşleştirme ya da anahtar yoksa SESSİZCE durur.
+   *
+   * Köprü isteğe bağlı: ÖKC'si olmayan kafede yalnızca yazıcı ajanı çalışır ve
+   * bağlanmayan bir soket için hata göstermek, olmayan bir sorunu bildirmek olur.
+   */
+  private async connectBridge(): Promise<void> {
+    this.bridge?.stop();
+    this.bridge = null;
+
+    const cfg = this.config.get();
+    const key = this.config.getBridgeKey();
+    if (!cfg.bridge || !key) {
+      this.emitStatus();
+      return;
+    }
+
+    const link = new BridgeLink({
+      apiBaseUrl: cfg.apiBaseUrl,
+      pairing: cfg.bridge,
+      deviceKey: key,
+      agentVersion: this.appVersion,
+      sell: async (input) => {
+        const result = await this.okc.sell(input);
+        this.recordSale(result);
+        return result;
+      },
+      // Yalnızca BİZİM işlemimiz sorulur; başka bir satışın sonucu buradan
+      // dönmez (bkz. `BridgeLink.onQuery`).
+      lookup: (saleId) =>
+        this.lastSale && this.lastSale.saleId === saleId ? this.lastSale : null,
+      reachable: () => this.okc.getHealth().ok === true,
+    });
+
+    link.on('changed', () => this.emitStatus());
+    link.on('unauthorized', () => {
+      log.warn('köprü yetkisi kaldırıldı — eşleştirme siliniyor');
+      this.config.clearBridge();
+      this.bridge = null;
+      this.emitStatus();
+    });
+
+    this.bridge = link;
+    await link.start();
+    this.emitStatus();
+  }
+
+  /** Kurulum kodunu köprü kimliğiyle takas eder ve bağlanır. */
+  async pairBridgeWithCode(code: string): Promise<BridgePairing> {
+    const cfg = this.config.get();
+    const paired = await pairBridge(cfg.apiBaseUrl, code);
+    const { deviceKey, ...pairing } = paired;
+
+    // Anahtar ÖNCE güvenli depoya, sonra yapılandırmaya: sıra tersine olsaydı
+    // araya giren bir çökme, kimliği olan ama anahtarı olmayan bir ajan
+    // bırakırdı ve o hâl elle kurtarılamaz.
+    this.config.setBridgeKey(deviceKey);
+    this.config.update({ bridge: pairing });
+    log.info('köprü eşleştirildi', { terminal: pairing.terminalLabel });
+
+    await this.connectBridge();
+    return pairing;
+  }
+
+  unpairBridge(): void {
+    this.bridge?.stop();
+    this.bridge = null;
+    this.config.clearBridge();
+    this.emitStatus();
+  }
+
+  setOkc(okc: OkcConfig | undefined): void {
+    this.config.update({ okc });
+    this.okc.setConfig(okc);
+    this.emitStatus();
+  }
+
+  /** Kasiyerin elle tetiklediği kurtarma — yarım kalan belgeyi tekrar dener. */
+  async retryPendingSale(): Promise<OkcSaleResult | null> {
+    const result = await this.okc.retryPending();
+    if (result) this.recordSale(result);
+    return result;
+  }
+
   setAutostartEnabled(enabled: boolean): void {
     this.config.update({ autostart: enabled });
     setAutostart(enabled);
@@ -203,6 +310,11 @@ export class Agent extends EventEmitter {
       lastJob: this.lastJob,
       printers: cfg.printers,
       printerHealth: this.printerHealth,
+      okc: cfg.okc,
+      okcHealth: this.okc.getHealth(),
+      lastSale: this.lastSale,
+      bridge: cfg.bridge,
+      bridgeConnected: this.bridge?.isConnected() ?? false,
     };
   }
 

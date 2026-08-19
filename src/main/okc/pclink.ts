@@ -1,0 +1,290 @@
+import https from 'node:https';
+import type { TLSSocket } from 'node:tls';
+import { log } from '../logger';
+
+/**
+ * Hugin PC Link istemcisi — kafedeki yazarkasaya LAN üzerinden konuşur.
+ *
+ * KAYNAK: https://hugin-pc-link.docs.buildwithfern.com
+ *
+ * BURADA İSTEMCİ BİZİZ. Cihaz `https://<ip>:4443` üzerinde bir REST sunucusu
+ * çalıştırır; belgeyi biz başlatır, biz sonlandırırız. (Hugin'in kablosuz yolu
+ * olan Cloud Link'te bu tam tersidir — orada sunucu bizim backend'imizdir ve
+ * ajan hiç devrede değildir.)
+ *
+ * DLL YOK. Doküman açık: "PC tarafında herhangi bir kütüphaneye (DLL) ihtiyaç
+ * duymadan https istemci ile Yazarkasa POS iletişimi sağlayabilirsiniz." Eski
+ * GMP-3 protokolünün şifreli native kütüphaneleri, sidecar süreçleri ve
+ * platform kısıtları bu yolda konu dışı.
+ */
+
+/** Cihazın varsayılan portu. */
+export const PCLINK_DEFAULT_PORT = 4443;
+
+/** Belge açma/sonlandırma cihazda kart okutmayı bekler; kısa timeout yetmez. */
+const DEFAULT_TIMEOUT_MS = 120_000;
+/** Durum sorgusu kart beklemez. */
+const STATUS_TIMEOUT_MS = 8_000;
+
+/**
+ * "EFT ödemesi alındı ama belge kapanamadı."
+ *
+ * Dokümanın en kritik ayrıntısı: bu durumda AYNI `Belge Sonlandır` isteğini
+ * birebir tekrar göndermek gerekir. Yeni bir ödeme başlatmak müşteriden ikinci
+ * kez para çeker.
+ */
+export const PCLINK_PARTIAL_STATUS = 206;
+
+export interface PcLinkTarget {
+  host: string;
+  port: number;
+  /**
+   * Cihaz sertifikasının SHA-256 parmak izi, ilk başarılı bağlantıda öğrenilir.
+   * Sonraki bağlantılarda EŞLEŞMEK ZORUNDA (bkz. `verifyPeer`).
+   */
+  fingerprint?: string;
+}
+
+export interface PcLinkResponse<T = Record<string, unknown>> {
+  httpStatus: number;
+  body: T & {
+    status?: string;
+    error?: { code?: string; title?: string; description?: string };
+    metadata?: { timestamp?: string; sfaVersion?: string };
+  };
+  /** İlk bağlantıda öğrenilen parmak izi — çağıran bunu kaydeder. */
+  fingerprint: string;
+}
+
+export class PcLinkError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+    readonly httpStatus: number | undefined,
+  ) {
+    super(message);
+    this.name = 'PcLinkError';
+  }
+}
+
+/**
+ * Cihaz adresi ÖZEL AĞ ARALIĞINDA olmak zorunda.
+ *
+ * Adres kullanıcıdan geliyor ve ona satış belgesi POST ediyoruz. Genel bir
+ * adrese izin vermek, kafedeki ajanı internete istek yapan bir araca çevirir —
+ * yazıcı tarafında aynı gerekçeyle aynı liste var. Yazarkasa tanım gereği
+ * kafenin kendi ağındadır; bu kısıt hiçbir gerçek kurulumu engellemez.
+ */
+export function isPrivateHost(host: string): boolean {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host.trim());
+  if (!v4) {
+    // İsim verilmişse yalnızca `.local` ve `localhost` — çözümlemeyi cihazın
+    // ağına bırakıp adı serbest bırakmak, kısıtı anlamsız kılardı.
+    const name = host.trim().toLowerCase();
+    return name === 'localhost' || name.endsWith('.local');
+  }
+  const [a, b] = [Number(v4[1]), Number(v4[2])];
+  if ([a, b].some((n) => Number.isNaN(n) || n > 255)) return false;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  // 169.254/16 — DHCP yokken cihazın kendine verdiği adres.
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+export class PcLinkClient {
+  constructor(private readonly target: PcLinkTarget) {
+    if (!isPrivateHost(target.host)) {
+      throw new PcLinkError(
+        'Yazarkasa adresi yerel ağda olmalı (ör. 192.168.1.50)',
+        'ERR_INVALID_PRM',
+        undefined,
+      );
+    }
+  }
+
+  /** `GET /v1/status` — cihaz uygun mu, açık belge var mı. */
+  status(): Promise<PcLinkResponse> {
+    return this.request('GET', '/v1/status', undefined, STATUS_TIMEOUT_MS);
+  }
+
+  /** `POST /v1/documents` — belgeyi açar, `documentId` döner. */
+  startDocument(docCategory = 'SALE'): Promise<PcLinkResponse<{ documentId?: string }>> {
+    return this.request('POST', '/v1/documents', { docCategory });
+  }
+
+  /**
+   * `PUT /v1/documents/{id}` — belgeyi kalemler ve ödemelerle sonlandırır.
+   *
+   * COMBO İŞLEM: tek `EFT_POS` ödemesi olan satışlarda `Parçalı Ödeme Ekle`
+   * adımı atlanır ve her şey bu tek istekte gider. Doküman bunu öneriyor,
+   * ölçülebilir bir hız farkı var ve bir adım eksik olması bir arıza noktası
+   * eksik olması demek.
+   */
+  finalizeDocument(
+    documentId: string,
+    document: Record<string, unknown>,
+  ): Promise<PcLinkResponse<{ receiptNo?: string; totals?: Record<string, string> }>> {
+    return this.request('PUT', `/v1/documents/${encodeURIComponent(documentId)}`, document);
+  }
+
+  /** `POST /v1/documents/{id}/cancel` — açık belgeyi iptal eder. */
+  cancelDocument(documentId: string): Promise<PcLinkResponse> {
+    return this.request('POST', `/v1/documents/${encodeURIComponent(documentId)}/cancel`, {});
+  }
+
+  private request<T>(
+    method: 'GET' | 'POST' | 'PUT',
+    path: string,
+    body?: unknown,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  ): Promise<PcLinkResponse<T>> {
+    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), 'utf8');
+
+    return new Promise((resolve, reject) => {
+      // Parmak izi EL SIKIŞMA ANINDA okunuyor, cevap bittiğinde değil: yanıt
+      // gövdesi tükendiğinde soket havuza iade edilmiş ya da kapanmış olabiliyor
+      // ve o noktada sertifika artık okunamıyor.
+      let peerFingerprint = '';
+      let peerError: Error | null = null;
+
+      const req = https.request(
+        {
+          host: this.target.host,
+          port: this.target.port,
+          path,
+          method,
+          timeout: timeoutMs,
+          headers: {
+            accept: 'application/json',
+            ...(payload
+              ? { 'content-type': 'application/json', 'content-length': payload.length }
+              : {}),
+          },
+          // SERTİFİKA DOĞRULAMASI KAPALI, AMA DOĞRULAMA VAR: cihaz kendi imzaladığı
+          // bir sertifika sunuyor ve arkasında güvenilecek bir CA yok, o yüzden
+          // zincir doğrulaması hiçbir zaman geçmez. Yerine parmak izi
+          // sabitliyoruz (aşağıda): ilk bağlantıda öğrenilen sertifika sonraki
+          // her bağlantıda aynı olmak zorunda. Zinciri doğrulamadan parmak izini
+          // de kontrol etmemek, aynı ağdaki herhangi bir makinenin yazarkasa
+          // taklidi yapabilmesi demekti.
+          rejectUnauthorized: false,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            if (peerError) {
+              reject(peerError);
+              return;
+            }
+            const fingerprint = peerFingerprint;
+
+            const text = Buffer.concat(chunks).toString('utf8');
+            let parsed: PcLinkResponse<T>['body'];
+            try {
+              parsed = (text ? JSON.parse(text) : {}) as PcLinkResponse<T>['body'];
+            } catch {
+              // Ayrıştırılamayan cevabı "başarılı" saymak, kesilmemiş bir fişi
+              // kesilmiş kabul etmektir.
+              reject(
+                new PcLinkError(
+                  'Yazarkasadan okunamayan bir cevap geldi',
+                  'ERR_DATA_CORRUPT',
+                  res.statusCode,
+                ),
+              );
+              return;
+            }
+
+            resolve({
+              httpStatus: res.statusCode ?? 0,
+              body: parsed as PcLinkResponse<T>['body'],
+              fingerprint,
+            });
+          });
+        },
+      );
+
+      req.on('socket', (socket) => {
+        const tlsSocket = socket as TLSSocket;
+        const capture = (): void => {
+          try {
+            peerFingerprint = this.verifyPeer(tlsSocket);
+          } catch (err) {
+            peerError = err instanceof Error ? err : new Error(String(err));
+            req.destroy();
+          }
+        };
+        // Soket havuzdan geldiyse el sıkışma çoktan bitmiştir.
+        if (tlsSocket.authorized !== undefined && typeof tlsSocket.getPeerCertificate === 'function' && !tlsSocket.connecting) {
+          capture();
+        } else {
+          tlsSocket.once('secureConnect', capture);
+        }
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        // Zaman aşımı BAŞARISIZLIK DEĞİL, BELİRSİZLİK: cihaz kartı çekmiş ama
+        // cevabı bize ulaşmamış olabilir. Çağıran bunu ret olarak yazamaz.
+        reject(new PcLinkError('Yazarkasa yanıt vermedi', undefined, undefined));
+      });
+      req.on('error', (err) => {
+        // Sertifika reddi bir ağ hatası değil: sebebini kaybetmeden yükseltilir.
+        reject(peerError ?? new PcLinkError(networkMessage(err), undefined, undefined));
+      });
+
+      if (payload) req.write(payload);
+      req.end();
+    });
+  }
+
+  /**
+   * Sertifika sabitleme (TOFU — ilk görüşte güven).
+   *
+   * İlk başarılı bağlantıda cihazın sertifika parmak izi kaydedilir; sonrasında
+   * değişirse bağlantı reddedilir. Cihazın sertifikası kendinden imzalı olduğu
+   * için zincir doğrulaması bir işe yaramıyor, ama "her seferinde AYNI cihaz mı"
+   * sorusu yine de cevaplanabilir ve asıl korunmak istenen şey o.
+   */
+  private verifyPeer(socket: TLSSocket | undefined): string {
+    const cert = socket?.getPeerCertificate?.();
+    const fingerprint = cert && 'fingerprint256' in cert ? cert.fingerprint256 : '';
+    if (!fingerprint) {
+      throw new PcLinkError('Yazarkasa sertifikası okunamadı', undefined, undefined);
+    }
+    if (this.target.fingerprint && this.target.fingerprint !== fingerprint) {
+      log.warn('pclink fingerprint mismatch', {
+        host: this.target.host,
+        expected: this.target.fingerprint.slice(0, 17),
+        got: fingerprint.slice(0, 17),
+      });
+      throw new PcLinkError(
+        'Yazarkasa sertifikası değişti — cihaz değiştiyse ayarlardan yeniden tanıtın',
+        'ERR_MATCH_ERROR',
+        undefined,
+      );
+    }
+    return fingerprint;
+  }
+}
+
+/** Sistem hatasını kasiyerin okuyabileceği bir cümleye çevirir. */
+function networkMessage(err: NodeJS.ErrnoException): string {
+  switch (err.code) {
+    case 'ECONNREFUSED':
+      return 'Yazarkasa bağlantıyı reddetti — cihaz açık mı, PC Link etkin mi?';
+    case 'EHOSTUNREACH':
+    case 'ENETUNREACH':
+      return 'Yazarkasaya ulaşılamıyor — aynı ağda mı?';
+    case 'ETIMEDOUT':
+      return 'Yazarkasa yanıt vermedi';
+    case 'ENOTFOUND':
+      return 'Yazarkasa adresi çözümlenemedi';
+    default:
+      return err.message || 'Yazarkasa bağlantı hatası';
+  }
+}

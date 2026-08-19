@@ -129,6 +129,8 @@ server.listen(PORT, () => {
   console.log(`mock gateway on http://localhost:${PORT}`);
   console.log(`PAIRING CODE: ${PAIRING_CODE}`);
   console.log('commands: bar | mutfak | soak <n> | revoke');
+  // ÖKC satışı BURADAN denenmez: o kanal socket.io `/bridge` ve gerçek
+  // backend'de yaşıyor. Bu mock yalnızca yazıcı kanalını (`/agent`) taklit eder.
 });
 
 readline.createInterface({ input: process.stdin }).on('line', (line) => {

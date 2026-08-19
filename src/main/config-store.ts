@@ -32,12 +32,21 @@ export class ConfigStore {
   private readonly dir: string;
   private readonly configPath: string;
   private readonly tokenPath: string;
+  /**
+   * Köprü anahtarı AYRI DOSYADA.
+   *
+   * Yazıcı token'ıyla aynı dosyaya konsaydı, birini iptal etmek diğerini de
+   * silerdi: yazıcı eşleştirmesini kaldıran bir kullanıcı, farkında olmadan
+   * yazarkasayı da düşürürdü.
+   */
+  private readonly bridgeKeyPath: string;
   private config: AgentConfig;
 
   constructor(dir = app.getPath('userData')) {
     this.dir = dir;
     this.configPath = path.join(dir, 'config.json');
     this.tokenPath = path.join(dir, 'device.token');
+    this.bridgeKeyPath = path.join(dir, 'bridge.key');
     fs.mkdirSync(dir, { recursive: true });
     this.config = this.load();
   }
@@ -102,6 +111,41 @@ export class ConfigStore {
       /* already gone */
     }
     this.update({ pairing: undefined });
+  }
+
+  // --- köprü anahtarı -----------------------------------------------------
+
+  setBridgeKey(key: string): void {
+    if (safeStorage.isEncryptionAvailable()) {
+      atomicWrite(this.bridgeKeyPath, safeStorage.encryptString(key));
+      this.volatileBridgeKey = null;
+    } else {
+      // OS anahtarlığı yoksa düz metin YAZMIYORUZ; bellekte tutuyoruz ve
+      // yeniden başlatmada eşleştirme tekrar isteniyor.
+      log.warn('safeStorage yok — köprü anahtarı yalnızca bellekte');
+      this.volatileBridgeKey = key;
+    }
+  }
+
+  private volatileBridgeKey: string | null = null;
+
+  getBridgeKey(): string | null {
+    if (this.volatileBridgeKey) return this.volatileBridgeKey;
+    try {
+      return safeStorage.decryptString(fs.readFileSync(this.bridgeKeyPath));
+    } catch {
+      return null;
+    }
+  }
+
+  clearBridge(): void {
+    this.volatileBridgeKey = null;
+    try {
+      fs.rmSync(this.bridgeKeyPath, { force: true });
+    } catch {
+      /* zaten yok */
+    }
+    this.update({ bridge: undefined });
   }
 
   isPaired(): boolean {

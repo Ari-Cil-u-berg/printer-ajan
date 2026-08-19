@@ -160,6 +160,85 @@ export interface AgentConfig {
   printers: Partial<Record<Station, PrinterConfig>>;
   pairing?: Omit<PairResponse, 'deviceToken'>;
   autostart: boolean;
+  /** Kablolu yazarkasa (Hugin PC Link). Tanımlı değilse ÖKC yolu kapalıdır. */
+  okc?: OkcConfig;
+  /**
+   * Ödeme köprüsü eşleştirmesi.
+   *
+   * Yazıcı eşleştirmesinden AYRI: yazıcı ajanı bir `Printer` satırıdır, köprü
+   * bir `Terminal`. Aynı bilgisayarda çalışsalar bile ayrı eşleştirilir; birini
+   * iptal etmek diğerini düşürmemeli.
+   */
+  bridge?: BridgePairing;
+}
+
+/** Köprü kimliği. Anahtar burada DEĞİL — safeStorage ile ayrı dosyada. */
+export interface BridgePairing {
+  deviceId: string;
+  terminalId: string;
+  terminalLabel: string;
+  tenantName: string;
+}
+
+/**
+ * Kafedeki yazarkasanın adresi.
+ *
+ * TEK CİHAZ, bilerek: ÖKC bir kasaya bağlıdır ve o kasada bir tane bulunur.
+ * Yazıcılar istasyona göre çoğalır (bar, mutfak, kasa) ama mali belge kesen
+ * cihaz tek bir mükellefe ait tek bir kayıt cihazıdır.
+ */
+export interface OkcConfig {
+  /** Yalnızca özel ağ aralığı — bkz. `pclink.ts` `isPrivateHost`. */
+  host: string;
+  port: number;
+  /**
+   * Cihaz sertifikasının SHA-256 parmak izi. İlk başarılı bağlantıda öğrenilir
+   * ve sonrasında EŞLEŞMEK ZORUNDA: cihaz kendinden imzalı sertifika sunduğu
+   * için zincir doğrulaması işe yaramıyor, "aynı cihaz mı" sorusu bununla
+   * cevaplanıyor.
+   */
+  fingerprint?: string;
+  /** Kasada görünen ad. */
+  label?: string;
+}
+
+export interface OkcHealth {
+  /** Cihaz ayarlandı mı. `false` ise ÖKC yolu hiç kurulmamış demektir. */
+  configured: boolean;
+  ok?: boolean;
+  /** Cihazın kendi durumu: `IDLE` ya da `DOC`. */
+  state?: string;
+  /** Cihazda yarım kalmış bir belge var mı. */
+  hasOpenDocument?: boolean;
+  /** Ajanda kapatılmayı bekleyen satış varsa kimliği. */
+  pendingSale?: string;
+  error?: string;
+  checkedAt?: string;
+}
+
+/** Backend'in gönderdiği satış emri. Belge backend'de kurulur, ajan taşır. */
+export interface OkcSaleRequest {
+  saleId: string;
+  /** `PUT /v1/documents/{id}` gövdesi — ajan için OPAK. */
+  document: Record<string, unknown>;
+}
+
+/**
+ * Satışın sonucu.
+ *
+ * `UNKNOWN` birinci sınıf bir durumdur, hata değil: cevabı kaybolmuş bir satış
+ * çekilmiş olabilir ve onu `DECLINED` yazmak, alınmış parayı yok saymaktır.
+ */
+export interface OkcSaleResult {
+  saleId: string;
+  status: 'APPROVED' | 'DECLINED' | 'UNKNOWN';
+  /** `ZZZZ_NNNN` — mali fişin kimliği. */
+  receiptNo?: string;
+  documentId?: string;
+  totals?: Record<string, string>;
+  error?: string;
+  /** Cihazın `ERR_*` kodu, geldiyse. */
+  code?: string;
 }
 
 /** What the settings window renders. */
@@ -178,9 +257,22 @@ export interface StatusSnapshot {
   lastJob?: { jobId: string; station: Station; status: string; at: string; error?: string };
   printers: Partial<Record<Station, PrinterConfig>>;
   printerHealth: Partial<Record<Station, { ok: boolean; checkedAt: string; error?: string }>>;
+  okc?: OkcConfig;
+  okcHealth: OkcHealth;
+  lastSale?: OkcSaleResult & { at: string };
+  bridge?: BridgePairing;
+  /** Köprü soketi ayakta mı. Yazıcı bağlantısından bağımsız bir sorudur. */
+  bridgeConnected: boolean;
 }
 
 /** WS wire protocol, agent <-> gateway. */
+/**
+ * `/agent` kanalı YALNIZCA FİŞ taşır.
+ *
+ * ÖKC satışı bilerek burada değil: o, `/bridge` üzerinden yürüyor. İki kanalın
+ * da aynı işi iddia etmesi, aynı satışın iki yoldan gelebilmesi demekti — ve
+ * mükerrer bir satış emri, müşteriden iki kez para çekmektir.
+ */
 export type ServerMessage =
   | { type: 'job'; payload: PrintJob }
   | { type: 'revoked'; reason?: string }

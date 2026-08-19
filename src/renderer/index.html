@@ -6,114 +6,268 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
     />
-    <title>Ari Adisyon Yazıcı Ajanı</title>
+    <title>Ari Adisyon Ajanı</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
-      <div>
-        <h1>Ari Adisyon Yazıcı Ajanı</h1>
-        <p class="sub" id="place">—</p>
+    <!--
+      İKİ EKRAN, TEK PENCERE.
+
+      Eşleştirilmemiş bir ajanda hiçbir ayarın anlamı yok: yazıcı seçmek, ÖKC
+      tanıtmak, günlük okumak — hepsi bir kafeye bağlı olmayı varsayar. O yüzden
+      eşleşmeden önce yalnızca kurulum görünür; sekmeler sonra açılır.
+    -->
+    <div id="onboarding" class="onboarding">
+      <div class="onboarding-card">
+        <div class="brand brand-lg">
+          <span class="mark" aria-hidden="true"></span>
+          <span>Ari Adisyon Ajanı</span>
+        </div>
+        <h1>Kafenize bağlayın</h1>
+        <p class="help">
+          Yönetim panelinde <b>Donanım → Ajan ekle</b>'ye basın. Ekranda çıkan 8 haneli kodu
+          buraya yazın. Kod 15 dakika geçerlidir ve yalnızca bir kez kullanılır.
+        </p>
+        <div class="code-field">
+          <input
+            id="code"
+            type="text"
+            maxlength="9"
+            placeholder="NSDP-25XR"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Eşleştirme kodu"
+          />
+          <button id="pairBtn" class="primary lg">Bağlan</button>
+        </div>
+        <p class="msg" id="pairMsg" role="status"></p>
+        <p class="fineprint">
+          Sürüm <span id="obVersion">—</span> · <span id="obEnv">—</span>
+        </p>
       </div>
-      <div class="state" id="state">
-        <span class="env hidden" id="envBadge"></span>
-        <span class="dot" id="dot"></span><span id="stateText">…</span>
+    </div>
+
+    <div id="app" class="app hidden">
+      <aside class="rail">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <span class="brand-name">Ari Adisyon</span>
+        </div>
+
+        <nav id="nav" aria-label="Bölümler">
+          <button class="navitem is-active" data-panel="status" type="button">
+            <span class="navdot" id="navDotStatus"></span> Durum
+          </button>
+          <button class="navitem" data-panel="printers" type="button">
+            <span class="navdot" id="navDotPrinters"></span> Yazıcılar
+          </button>
+          <button class="navitem" data-panel="okc" type="button">
+            <span class="navdot" id="navDotOkc"></span> Yazarkasa
+          </button>
+          <button class="navitem" data-panel="logs" type="button">
+            <span class="navdot"></span> Günlükler
+          </button>
+        </nav>
+
+        <div class="rail-foot">
+          <button id="hideBtn" class="ghost block">Pencereyi kapat</button>
+          <p class="fineprint">Arka planda çalışmaya devam eder.</p>
+        </div>
+      </aside>
+
+      <div class="content">
+        <header class="topbar">
+          <div class="topbar-place">
+            <strong id="place">—</strong>
+            <span class="fineprint" id="deviceLine">—</span>
+          </div>
+          <div class="topbar-right">
+            <span class="env hidden" id="envBadge"></span>
+            <span class="pill" id="connPill"><span class="dot" id="dot"></span><span id="stateText">…</span></span>
+          </div>
+        </header>
+
+        <main>
+          <!-- ── Durum ───────────────────────────────────────────────────── -->
+          <section class="panel is-active" data-panel="status">
+            <div class="metrics">
+              <div class="metric">
+                <span class="metric-label">Bekleyen fiş</span>
+                <span class="metric-value" id="sQueue">0</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Yazıcı</span>
+                <span class="metric-value" id="sPrinters">—</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Yazarkasa</span>
+                <span class="metric-value" id="sOkc">—</span>
+              </div>
+            </div>
+
+            <section class="card">
+              <h2>Son işlemler</h2>
+              <dl class="kv">
+                <dt>Son fiş</dt><dd id="sLast">—</dd>
+                <dt>Son mali belge</dt><dd id="sLastSale">—</dd>
+              </dl>
+            </section>
+
+            <section class="card">
+              <h2>Bu bilgisayar</h2>
+              <dl class="kv">
+                <dt>Ad</dt><dd><input id="deviceName" type="text" /></dd>
+                <dt>Bağlı kafe</dt><dd id="pairedPlace">—</dd>
+                <dt>Sunucu</dt><dd id="sEnv" class="mono">—</dd>
+              </dl>
+              <label class="check"><input type="checkbox" id="autostart" /> Bilgisayar açılınca otomatik başlat</label>
+              <div class="row">
+                <button id="unpairBtn" class="ghost danger">Kafe bağlantısını kaldır</button>
+              </div>
+            </section>
+
+            <section class="card">
+              <h2>Sürüm</h2>
+              <div class="update-line">
+                <span class="update-dot" id="updateDot"></span>
+                <span id="updateText">Güncelleme durumu denetleniyor…</span>
+              </div>
+              <p class="help" id="updateDetail"></p>
+              <div class="row">
+                <button id="updateBtn" class="ghost">Güncellemeleri denetle</button>
+                <button id="updateInstallBtn" class="primary hidden">Yeniden başlat ve kur</button>
+                <button id="updateDownloadBtn" class="ghost hidden">İndirme sayfasını aç</button>
+              </div>
+            </section>
+          </section>
+
+          <!-- ── Yazıcılar ───────────────────────────────────────────────── -->
+          <section class="panel" data-panel="printers">
+            <section class="card">
+              <h2>Yazıcılar</h2>
+              <p class="help">
+                Ağ yazıcısı (IP ile) en sağlam yöntemdir. USB yazıcı kullanıyorsanız önce
+                Windows/Mac'e normal yazıcı olarak kurun, sonra buradan seçin.
+              </p>
+              <div class="row">
+                <button id="refreshBtn" class="ghost">Kurulu yazıcıları yenile</button>
+                <button id="scanBtn" class="ghost">Ağda ara</button>
+                <span class="msg" id="scanMsg" role="status"></span>
+              </div>
+            </section>
+            <div class="stations" id="stations"></div>
+          </section>
+
+          <!-- ── Yazarkasa ───────────────────────────────────────────────── -->
+          <section class="panel" data-panel="okc">
+            <section class="card">
+              <h2>Yazarkasa (ÖKC)</h2>
+              <p class="help">
+                Kablolu Hugin yazarkasa. Cihazın <b>aynı ağda</b> ve PC Link'in açık olması
+                gerekir. Adres cihazın ayarlar ekranında yazar.
+              </p>
+              <dl class="kv">
+                <dt>IP adresi</dt>
+                <dd><input id="okcHost" type="text" placeholder="192.168.1.50" autocomplete="off" /></dd>
+                <dt>Port</dt>
+                <dd><input id="okcPort" type="number" value="4443" /></dd>
+                <dt>Ad</dt>
+                <dd><input id="okcLabel" type="text" placeholder="Kasa yazarkasası" autocomplete="off" /></dd>
+              </dl>
+              <div class="row">
+                <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>
+                <button id="okcTestBtn" class="ghost">Bağlantıyı sına</button>
+                <button id="okcClearBtn" class="ghost danger">Kaldır</button>
+              </div>
+              <p class="msg" id="okcMsg" role="status"></p>
+            </section>
+
+            <!--
+              Köprü eşleştirmesi CİHAZ AYARININ ALTINDA: önce yazarkasaya
+              ulaşılıyor mu, sonra satış emrini kim gönderecek. Sıra tersine
+              olsaydı, cihazı hiç tanıtmadan eşleştiren biri çalışmayan bir
+              kurulumla baş başa kalırdı.
+            -->
+            <section class="card">
+              <h2>Satış bağlantısı</h2>
+              <p class="help">
+                Yazarkasa satışlarının geleceği kanal. Yönetim panelinde
+                <b>cihaz → Kurulum kodu</b> ile 8 haneli kodu alın.
+              </p>
+              <dl class="kv">
+                <dt>Durum</dt><dd id="bridgeState">—</dd>
+                <dt>Cihaz</dt><dd id="bridgeTerminal">—</dd>
+              </dl>
+              <div class="row" id="bridgePairRow">
+                <input id="bridgeCode" type="text" maxlength="9" placeholder="NSDP-25XR" autocomplete="off" spellcheck="false" />
+                <button id="bridgePairBtn" class="primary">Eşleştir</button>
+              </div>
+              <div class="row hidden" id="bridgeUnpairRow">
+                <button id="bridgeUnpairBtn" class="ghost danger">Eşleştirmeyi kaldır</button>
+              </div>
+              <p class="msg" id="bridgeMsg" role="status"></p>
+            </section>
+
+            <section class="card">
+              <h2>Cihaz durumu</h2>
+              <dl class="kv">
+                <dt>Bağlantı</dt><dd id="okcState">—</dd>
+                <dt>Açık belge</dt><dd id="okcDoc">—</dd>
+                <dt>Sertifika</dt><dd id="okcCert" class="mono">—</dd>
+                <dt>Son denetim</dt><dd id="okcChecked">—</dd>
+              </dl>
+            </section>
+
+            <!--
+              Yarım kalmış belge kutusu. Yalnızca gerçekten bir belge
+              beklerken görünür: her zaman duran bir "tekrar dene" düğmesi,
+              kasiyerin ihtiyaç anında onu fark etmesini zorlaştırır.
+            -->
+            <section class="card warnbox hidden" id="okcPendingCard">
+              <h2>Kapatılmayı bekleyen fiş var</h2>
+              <p class="help" id="okcPendingText">
+                Ödeme alınmış olabilir. Önce <b>Tekrar dene</b>'yi kullanın; fiş kesilmediyse
+                iptal edin. Yeni satış başlatmayın.
+              </p>
+              <div class="row">
+                <button id="okcRetryBtn" class="primary">Tekrar dene</button>
+                <button id="okcCancelBtn" class="ghost danger">Belgeyi iptal et</button>
+              </div>
+              <p class="msg" id="okcPendingMsg" role="status"></p>
+            </section>
+          </section>
+
+          <!-- ── Günlükler ───────────────────────────────────────────────── -->
+          <section class="panel" data-panel="logs">
+            <section class="card">
+              <h2>Günlükler</h2>
+              <p class="help">
+                Bir sorun yaşarsanız <b>Kopyala</b>'ya basıp destek ekibine gönderin.
+                Kayıtlarda şifre, kart bilgisi veya eşleştirme kodu yer almaz.
+              </p>
+              <div class="row logtools">
+                <select id="logLevelFilter" aria-label="Kayıt seviyesi">
+                  <option value="debug">Tümü</option>
+                  <option value="info" selected>Bilgi ve üzeri</option>
+                  <option value="warn">Uyarı ve üzeri</option>
+                  <option value="error">Sadece hatalar</option>
+                </select>
+                <input id="logSearch" type="text" placeholder="Filtrele…" autocomplete="off" />
+                <label class="check"><input type="checkbox" id="logFollow" checked /> Takip et</label>
+                <span class="msg" id="logMsg" role="status"></span>
+              </div>
+              <div class="logview" id="logView"></div>
+              <div class="row">
+                <button id="logCopyBtn" class="ghost">Kopyala</button>
+                <button id="logClearBtn" class="ghost">Ekranı temizle</button>
+                <button id="logFileBtn" class="ghost">Dosyayı aç</button>
+                <button id="logFolderBtn" class="ghost">Klasörü aç</button>
+              </div>
+            </section>
+          </section>
+        </main>
       </div>
-    </header>
-
-    <main>
-      <!-- 1. Pairing -->
-      <section class="card" id="pairCard">
-        <h2>1. Kafeye bağla</h2>
-        <p class="help">
-          Yönetim panelinizde <b>Yazıcı ajanı ekle</b>'ye basın, çıkan 8 haneli kodu buraya yazın.
-          Kod 15 dakika geçerlidir ve yalnızca bir kez kullanılabilir.
-        </p>
-        <div class="row">
-          <input id="code" type="text" maxlength="9" placeholder="ÖRN: NSDP-25XR" autocomplete="off" />
-          <button id="pairBtn" class="primary">Bağla</button>
-        </div>
-        <p class="msg" id="pairMsg"></p>
-        <div id="pairedBox" class="paired hidden">
-          <p>Bağlı: <b id="pairedPlace"></b></p>
-          <button id="unpairBtn" class="ghost">Bağlantıyı kaldır</button>
-        </div>
-      </section>
-
-      <!-- 2. Printers -->
-      <section class="card">
-        <h2>2. Yazıcıları seç</h2>
-        <p class="help">
-          Ağ yazıcısı (IP ile) en sağlam yöntemdir. USB yazıcı kullanıyorsanız önce Windows/Mac'e
-          normal yazıcı olarak kurun, sonra buradan seçin.
-        </p>
-        <div class="stations" id="stations"></div>
-        <div class="row">
-          <button id="refreshBtn" class="ghost">Yazıcıları yenile</button>
-          <button id="scanBtn" class="ghost">Ağda yazıcı ara</button>
-          <span class="msg" id="scanMsg"></span>
-        </div>
-      </section>
-
-      <!-- 3. Status -->
-      <section class="card">
-        <h2>3. Durum</h2>
-        <dl class="status">
-          <dt>Bağlantı</dt><dd id="sConn">—</dd>
-          <dt>Bekleyen fiş</dt><dd id="sQueue">0</dd>
-          <dt>Son iş</dt><dd id="sLast">—</dd>
-          <dt>Bu bilgisayar</dt><dd><input id="deviceName" type="text" /></dd>
-          <dt>Sürüm</dt><dd id="sVersion">—</dd>
-          <dt>Ortam / sunucu</dt><dd id="sEnv">—</dd>
-        </dl>
-        <label class="check"><input type="checkbox" id="autostart" /> Bilgisayar açılınca otomatik başlat</label>
-
-        <div class="update" id="updateBox">
-          <div class="update-line">
-            <span class="update-dot" id="updateDot"></span>
-            <span id="updateText">Güncelleme durumu denetleniyor…</span>
-          </div>
-          <p class="help" id="updateDetail"></p>
-          <div class="row">
-            <button id="updateBtn" class="ghost">Güncellemeleri denetle</button>
-            <button id="updateInstallBtn" class="primary hidden">Yeniden başlat ve kur</button>
-            <button id="updateDownloadBtn" class="ghost hidden">İndirme sayfasını aç</button>
-          </div>
-        </div>
-
-        <div class="row">
-          <button id="logBtn" class="ghost">Günlük dosyası</button>
-          <button id="hideBtn" class="ghost">Pencereyi kapat (arka planda çalışır)</button>
-        </div>
-      </section>
-
-      <!-- 4. Logs -->
-      <section class="card">
-        <h2>4. Günlükler</h2>
-        <p class="help">
-          Uygulamanın canlı kayıtları. Bir sorun yaşarsanız <b>Kopyala</b>'ya basıp destek ekibine
-          gönderin. Kayıtlarda şifre veya eşleştirme kodu yer almaz.
-        </p>
-        <div class="row logtools">
-          <select id="logLevelFilter">
-            <option value="debug">Tümü (debug)</option>
-            <option value="info" selected>Bilgi ve üzeri</option>
-            <option value="warn">Uyarı ve üzeri</option>
-            <option value="error">Sadece hatalar</option>
-          </select>
-          <input id="logSearch" type="text" placeholder="Filtrele…" autocomplete="off" />
-          <label class="check"><input type="checkbox" id="logFollow" checked /> Takip et</label>
-          <span class="msg" id="logMsg"></span>
-        </div>
-        <div class="logview" id="logView"></div>
-        <div class="row">
-          <button id="logCopyBtn" class="ghost">Kopyala</button>
-          <button id="logClearBtn" class="ghost">Ekranı temizle</button>
-          <button id="logFileBtn" class="ghost">Dosyayı aç</button>
-          <button id="logFolderBtn" class="ghost">Klasörü aç</button>
-        </div>
-      </section>
-    </main>
+    </div>
 
     <script src="index.js"></script>
   </body>

@@ -1,9 +1,10 @@
 import { BrowserWindow, ipcMain, shell } from 'electron';
 import { isStation } from '../shared/types';
-import type { LogEntry, PrinterConfig, Station } from '../shared/types';
+import type { LogEntry, OkcConfig, PrinterConfig, Station } from '../shared/types';
 import type { Agent } from './agent';
 import { envConfig } from './env';
 import { log } from './logger';
+import { isPrivateHost, PCLINK_DEFAULT_PORT } from './okc/pclink';
 import { listPrinters, scanNetworkPrinters } from './print/printer-registry';
 import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
 
@@ -62,6 +63,37 @@ function assertPrinter(value: unknown): PrinterConfig {
   };
 }
 
+/**
+ * Yazarkasa adresi.
+ *
+ * ÖZEL AĞ KISITI BURADA DA VAR, sürücüde de: bu katman kullanıcı girdisini
+ * reddedip anlaşılır bir mesaj verir, sürücüdeki kontrol ise onu atlayan her
+ * çağrı yolu için son savunmadır. Aynı kuralı iki yerde tutmak, birini
+ * kaldırmanın diğerini de kaldırmasını engeller.
+ */
+function assertOkc(value: unknown): OkcConfig {
+  const c = value as OkcConfig;
+  if (!c || typeof c !== 'object') throw new Error('Geçersiz yazarkasa ayarı');
+
+  const host = String(c.host ?? '').trim();
+  if (!host) throw new Error('Yazarkasa adresi girin');
+  if (!isPrivateHost(host)) throw new Error('Adres yerel ağda olmalı (ör. 192.168.1.50)');
+
+  const port = c.port ?? PCLINK_DEFAULT_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Geçersiz port');
+
+  const label = typeof c.label === 'string' ? c.label.trim().slice(0, 60) : '';
+
+  return {
+    host,
+    port,
+    ...(label ? { label } : {}),
+    // Parmak izi KULLANICIDAN GELMEZ: cihazdan öğrenilir. Dışarıdan kabul
+    // etmek, sabitlemenin anlamını ortadan kaldırırdı.
+    ...(c.fingerprint && typeof c.fingerprint === 'string' ? { fingerprint: c.fingerprint } : {}),
+  };
+}
+
 export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('status:get', () => agent.status());
 
@@ -93,6 +125,49 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
   );
 
   ipcMain.handle('printers:probe', () => guard(async () => { await agent.refreshPrinterHealth(); return agent.status(); }));
+
+  // --- yazarkasa (ÖKC) ----------------------------------------------------
+
+  ipcMain.handle('okc:set', (_e, config: unknown) =>
+    guard(async () => {
+      // `null` = cihazı kaldır. Kaldırmak bir hata değil, geçerli bir karar:
+      // ÖKC'siz çalışan kafeler var.
+      const next = config === null ? undefined : assertOkc(config);
+      // Var olan parmak izi korunur — adres aynı kaldıysa cihaz da aynıdır ve
+      // kullanıcı ayar ekranını her açtığında sabitlemeyi sıfırlamak, korumayı
+      // hiç yapmamakla aynı şey olurdu.
+      const current = agent.okc.getConfig();
+      if (next && current && current.host === next.host && current.fingerprint) {
+        next.fingerprint = current.fingerprint;
+      }
+      agent.setOkc(next);
+      await agent.okc.refreshHealth();
+      return agent.status();
+    }),
+  );
+
+  ipcMain.handle('okc:test', () => guard(() => agent.okc.refreshHealth()));
+
+  // --- ödeme köprüsü ------------------------------------------------------
+
+  ipcMain.handle('bridge:pair', (_e, code: unknown) =>
+    guard(async () => {
+      if (typeof code !== 'string') throw new Error('Geçersiz kod');
+      await agent.pairBridgeWithCode(code);
+      return agent.status();
+    }),
+  );
+
+  ipcMain.handle('bridge:unpair', () =>
+    guard(() => {
+      agent.unpairBridge();
+      return agent.status();
+    }),
+  );
+
+  ipcMain.handle('okc:retry', () => guard(() => agent.retryPendingSale()));
+
+  ipcMain.handle('okc:cancel', () => guard(() => agent.okc.cancelPending()));
 
   ipcMain.handle('settings:autostart', (_e, enabled: unknown) =>
     guard(() => { agent.setAutostartEnabled(Boolean(enabled)); return agent.status(); }),

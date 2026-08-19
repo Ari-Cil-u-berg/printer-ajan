@@ -1,4 +1,4 @@
-# Ari Adisyon Yazıcı Ajanı
+# Ari Adisyon Ajanı
 
 Cross-platform (Windows + macOS) print agent. Runs in the system tray on the café till,
 holds an outbound WSS connection to the cloud POS, and prints bar/kitchen tickets on
@@ -101,7 +101,10 @@ buffer that the settings window streams live under **4. Günlükler**.
 | [src/main/config-store.ts](src/main/config-store.ts) | Config + `safeStorage`-encrypted device token |
 | [src/main/env.ts](src/main/env.ts) | Environment resolution, presets, `.env` loading |
 | [src/main/logger.ts](src/main/logger.ts) | Leveled logging, redaction, rotation, in-app buffer |
-| [src/renderer/](src/renderer/) | Turkish settings UI (pair → printers → status) |
+| [src/main/okc/pclink.ts](src/main/okc/pclink.ts) | Hugin PC Link HTTPS client, certificate pinning |
+| [src/main/okc/okc.ts](src/main/okc/okc.ts) | Fiscal sale flow, `206` recovery, durable pending document |
+| [src/main/bridge/bridge-link.ts](src/main/bridge/bridge-link.ts) | `/bridge` socket, pairing, short-lived token refresh, sale dispatch |
+| [src/renderer/](src/renderer/) | Turkish settings UI (rail nav: status · printers · ÖKC · logs) |
 
 Internal documentation (environment and logging design, security notes, the backend
 contract, the download page) lives in `docs/`, which is deliberately not published:
@@ -115,6 +118,65 @@ reliable, survives OS updates. "Ağda yazıcı ara" sweeps the local /24 for ope
 **USB.** Install the printer in Windows/macOS as a normal printer first, then pick it
 from the dropdown. The agent sends raw bytes to the OS queue; the vendor driver owns
 the USB transport.
+
+## Yazarkasa (ÖKC) — Hugin PC Link
+
+The agent also drives a **cabled Hugin fiscal device** over its local REST API. No DLL,
+no sidecar: the device runs an HTTPS server on `:4443` and the agent is the client.
+(Hugin's *wireless* path — Cloud Link — inverts this and needs no agent at all; there
+the backend is the server. See the backend's `drivers/hugin/README.md`.)
+
+### Two pairings, two identities
+
+The printer agent is a `Printer` row; the fiscal bridge is a `Terminal`. They run in
+the same process but pair separately, and revoking one must not drop the other — so the
+bridge key lives in its own `bridge.key` (safeStorage), never beside `device.token`.
+
+Sales arrive over **socket.io `/bridge`**, not the printer's raw `/agent` socket. That
+channel already solves what this needs — Redis-adapter fan-out across API instances,
+room-scoped delivery, `ack`/`result` correlation and the timeout sweep that asks
+`query-last` when a reply goes missing. Carrying one dependency in the agent was cheaper
+than writing a second copy of that logic in the backend. The `/agent` protocol carries
+**tickets only**; two channels claiming the same sale is how a customer gets charged twice.
+
+Pair it under **Yazarkasa → Satış bağlantısı** with the code from the admin panel
+(device → *Kurulum kodu*).
+
+### Device setup
+
+Set the device up under **Yazarkasa**: IP, port, optional label. Then:
+
+| Step | Call |
+| --- | --- |
+| Health / open-document check | `GET /v1/status` |
+| Start the document | `POST /v1/documents` → `documentId` |
+| Finish it with items + payments | `PUT /v1/documents/{id}` → `receiptNo` (`ZZZZ_NNNN`) |
+
+**The document is built by the backend, not here.** The agent carries it opaquely,
+tagged `HUGIN_PCLINK_V1`; a tag it does not recognise is refused rather than guessed.
+The same document also feeds the wireless path, and two builders would mean two fiscal
+receipts that differ by a kuruş.
+
+`UNKNOWN` is never reported over the bridge. The protocol carries APPROVED/DECLINED
+only, because "I don't know" is already a state on the backend — silence. The intent
+stays SENT, the sweep moves it to TIMEOUT and asks `query-last`, and to that question the
+agent answers honestly with `null`. Reporting uncertainty as DECLINED would write off
+money that may well have been taken.
+
+Three behaviours are the whole point of this module:
+
+- **`UNKNOWN` is a first-class result.** A lost response is not a decline — the card may
+  have been charged. It is reported as `UNKNOWN` and recovery is the cashier's call.
+- **`206` means the payment succeeded but the receipt did not close.** The fix is
+  resending the *identical* finalize request; starting a new payment would charge the
+  customer twice. The agent retries, then hands it to the operator.
+- **The `documentId` is written to disk before finalizing.** If the agent crashes
+  mid-sale, that id is the only thing that can close the document still open on the
+  device. The **Yazarkasa** panel shows it and offers retry / cancel.
+
+Addresses are restricted to private ranges, and the device's self-signed certificate is
+**pinned on first sight** — a chain check can never pass against a self-signed cert, but
+"is this the same device?" still can.
 
 ## Turkish characters
 
@@ -181,3 +243,5 @@ from the macOS job, and remove the `darwin` guard in the updater.
 - Renderer runs sandboxed with context isolation, a strict CSP, and no navigation; the
   preload exposes a fixed, validated IPC surface.
 - A `401`/`403` handshake or a `revoked` message clears the pairing and stops retrying.
+- The fiscal device address is restricted to private ranges (validated in the IPC layer
+  *and* in the client), and its certificate is pinned after the first connection.

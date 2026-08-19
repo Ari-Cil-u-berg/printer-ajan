@@ -1,8 +1,8 @@
 {
   "name": "ari-adisyon-ajan",
   "productName": "Ari Adisyon Yazıcı Ajanı",
-  "version": "0.1.4",
-  "description": "Ari Adisyon print agent — connects local thermal printers to the cloud POS.",
+  "version": "0.3.0",
+  "description": "Ari Adisyon agent — connects local thermal printers and Hugin fiscal devices to the cloud POS.",
   "main": "dist/main/index.js",
   "author": {
     "name": "Ari Adisyon",
@@ -28,11 +28,13 @@
     "dist:win": "npm run build:prod && electron-builder --win",
     "dist:staging:win": "npm run build:staging && electron-builder --win -c.publish=null",
     "dist:staging:mac": "npm run build:staging && electron-builder --mac -c.publish=null",
-    "release": "npm run build:prod && electron-builder --publish always"
+    "release": "bash scripts/release.sh",
+    "release:dry": "bash scripts/release.sh --dry-run"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
     "iconv-lite": "^0.6.3",
+    "socket.io-client": "^4.8.3",
     "ws": "^8.18.0"
   },
   "devDependencies": {

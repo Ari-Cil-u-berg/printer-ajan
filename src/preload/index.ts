@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LogEntry, PrinterConfig, StatusSnapshot, Station, UpdateStatus } from '../shared/types';
+import type {
+  LogEntry,
+  OkcConfig,
+  OkcHealth,
+  OkcSaleResult,
+  PrinterConfig,
+  StatusSnapshot,
+  Station,
+  UpdateStatus,
+} from '../shared/types';
 
 /** The only surface the renderer gets — no Node, no ipcRenderer passthrough. */
 const api = {
@@ -18,6 +27,14 @@ const api = {
     ipcRenderer.invoke('printers:set', station, printer),
   testPrint: (station: Station) => ipcRenderer.invoke('printers:test', station),
   probe: () => ipcRenderer.invoke('printers:probe'),
+  setOkc: (config: OkcConfig | null) => ipcRenderer.invoke('okc:set', config),
+  testOkc: (): Promise<{ ok: true; data: OkcHealth } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('okc:test'),
+  retryOkc: (): Promise<{ ok: true; data: OkcSaleResult | null } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('okc:retry'),
+  cancelOkc: () => ipcRenderer.invoke('okc:cancel'),
+  pairBridge: (code: string) => ipcRenderer.invoke('bridge:pair', code),
+  unpairBridge: () => ipcRenderer.invoke('bridge:unpair'),
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('settings:autostart', enabled),
   setDeviceName: (name: string) => ipcRenderer.invoke('settings:deviceName', name),
   checkUpdates: () => ipcRenderer.invoke('app:checkUpdates'),

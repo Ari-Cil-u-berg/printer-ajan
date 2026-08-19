@@ -3,7 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { isStation } from '../shared/types';
-import type { ClientMessage, ConnectionState, DeviceInfo, JobAck, PrintJob, ServerMessage } from '../shared/types';
+import type {
+  ClientMessage,
+  ConnectionState,
+  DeviceInfo,
+  JobAck,
+  PrintJob,
+  ServerMessage,
+} from '../shared/types';
 import { atomicWrite } from './fsutil';
 import { log } from './logger';
 
@@ -340,3 +347,4 @@ function describeRejectedJob(value: unknown): Record<string, unknown> {
     reason,
   };
 }
+
