@@ -200,6 +200,22 @@ export interface OkcConfig {
   fingerprint?: string;
   /** Kasada görünen ad. */
   label?: string;
+  /**
+   * `X-HardwareId` — cihazın çağıranı tanımak için ZORUNLU tuttuğu başlık.
+   *
+   * Boş bırakılırsa makinenin kendi adı gönderiliyor. Doküman bu başlığı
+   * opsiyonel gösteriyor ama saha cihazı başlıksız her isteği reddediyor —
+   * bkz. `pclink.ts`.
+   */
+  hardwareId?: string;
+  /** `X-SoftwareId`. Boşsa `ari-adisyon-ajan`. */
+  softwareId?: string;
+  /**
+   * Cihazın sicil numarası, `X-SerialNo` başlığında gider.
+   *
+   * `GET /v1/settings` döndürüyor; bilinmiyorsa başlık hiç gönderilmiyor.
+   */
+  serialNo?: string;
 }
 
 export interface OkcHealth {

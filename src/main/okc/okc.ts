@@ -80,6 +80,12 @@ export class OkcManager extends EventEmitter {
         host: this.config.host,
         port: this.config.port,
         ...(this.config.fingerprint ? { fingerprint: this.config.fingerprint } : {}),
+        // Boş geçilenler istemcide varsayılana düşüyor; burada `undefined`
+        // yollamak `exactOptionalPropertyTypes` altında "alan var ama boş"
+        // demek olurdu ve o da cihazın reddettiği durum.
+        ...(this.config.hardwareId ? { hardwareId: this.config.hardwareId } : {}),
+        ...(this.config.softwareId ? { softwareId: this.config.softwareId } : {}),
+        ...(this.config.serialNo ? { serialNo: this.config.serialNo } : {}),
       });
     } catch (err) {
       this.client = null;
@@ -113,6 +119,7 @@ export class OkcManager extends EventEmitter {
     try {
       const response = await this.client.status();
       this.rememberFingerprint(response.fingerprint);
+      await this.learnSerialNo();
 
       const body = response.body as { state?: string; activeDocument?: unknown };
       this.health = {
@@ -321,6 +328,34 @@ export class OkcManager extends EventEmitter {
    * Bir kez yazılır ve bir daha değişmez: değişmesi gereken tek durum cihazın
    * gerçekten değişmesidir ve o da ayarlardan yeniden tanıtmakla olur.
    */
+  /**
+   * Sicil numarasını CİHAZDAN öğrenir, kurulumcuya sordurmaz.
+   *
+   * `GET /v1/settings` onu zaten döndürüyor ve doküman sicili diğer bütün
+   * çağrılarda `X-SerialNo` ile göndermeyi istiyor. Elle girdirmenin iki
+   * bedeli vardı: numara cihazın kilitli ekranının arkasında olabiliyor, ve
+   * yanlış yazılan bir sicil ancak ilk satışta fark ediliyor.
+   *
+   * Bir kez, sessizce. Başarısız olması sağlığı düşürmez — sicil olmadan da
+   * `status` çalışıyor ve bir sonraki kontrolde yeniden denenir.
+   */
+  private async learnSerialNo(): Promise<void> {
+    if (!this.client || !this.config || this.config.serialNo) return;
+    try {
+      const response = await this.client.settings();
+      const serialNo = response.body.serialNo?.trim();
+      if (!serialNo) return;
+      this.config = { ...this.config, serialNo };
+      this.persist(this.config);
+      this.rebuild();
+      log.info('okc sicil numarası okundu', { serialNo });
+    } catch (err) {
+      log.warn('okc sicil numarası okunamadı', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private rememberFingerprint(fingerprint: string): void {
     if (!this.config || this.config.fingerprint === fingerprint) return;
     if (this.config.fingerprint) return;

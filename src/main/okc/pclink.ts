@@ -1,4 +1,6 @@
 import https from 'node:https';
+import { createHash } from 'node:crypto';
+import { hostname } from 'node:os';
 import type { TLSSocket } from 'node:tls';
 import { log } from '../logger';
 
@@ -43,6 +45,60 @@ export interface PcLinkTarget {
    * Sonraki bağlantılarda EŞLEŞMEK ZORUNDA (bkz. `verifyPeer`).
    */
   fingerprint?: string;
+  /**
+   * `X-HardwareId` — çağıran makineyi tanıtır.
+   *
+   * ZORUNLU, dokümanın aksine. OpenAPI tanımı bu üç başlığı da
+   * `required: false` işaretliyor; saha cihazı ise başlıksız her isteği
+   * `ERR_UNAUTHORIZED — "X-HardwareId değeri boş olamaz"` ile reddediyor.
+   * Dokümana güvenip göndermemek, `GET /v1/status` dahil HİÇBİR çağrının
+   * çalışmaması demekti — sağlık göstergesi kırmızı, sebebi görünmez.
+   */
+  hardwareId?: string;
+  /** `X-SoftwareId` — çağıran uygulamayı tanıtır. Aynı sebeple gönderiliyor. */
+  softwareId?: string;
+  /**
+   * `X-SerialNo` — cihazın kendi sicili.
+   *
+   * `GET /v1/settings` bunu döndürüyor ve doküman "diğer tüm endpointlarda
+   * gönderilmelidir" diyor. Bilinmiyorsa gönderilmiyor: uydurulmuş bir sicil,
+   * boş bırakmaktan daha kötü bir cevap alır.
+   */
+  serialNo?: string;
+}
+
+/** Cihaz boş bırakılmasına izin vermiyor; kimliği yoksa da bir şey göndermeli. */
+const DEFAULT_SOFTWARE_ID = 'ari-adisyon-ajan';
+
+/**
+ * Cihazın kimlik başlıklarına dayattığı uzunluk aralığı.
+ *
+ * SAHADAN ÖĞRENİLDİ, dokümandan değil: OpenAPI tanımı bu başlıkları hiç
+ * kısıtlamıyor, `X-HardwareId: kasa-1` gönderen istek ise
+ * `"x-hardwareid değeri 8 karakterden kısa, 20 karakterden uzun olamaz"`
+ * ile reddediliyor. Kısıt YALNIZCA `X-HardwareId` için doğrulandı;
+ * `X-SoftwareId` de aynı ölçüye sokuluyor çünkü kuralın ona da uyduğunu
+ * varsaymak, uymadığını sahada öğrenmekten ucuz — varsayılanımız zaten
+ * aralıkta.
+ */
+const ID_MIN_LENGTH = 8;
+const ID_MAX_LENGTH = 20;
+
+/**
+ * Serbest metni cihazın kabul ettiği bir kimliğe çevirir.
+ *
+ * KISA OLANI UZATMAK, uzun olanı kesmek. "kasa-1" yazan kurulumcu haklı — o ad
+ * kafede anlamlı; başlığın uzunluk kuralı bizim iç meselemiz ve kullanıcıya
+ * hata olarak dönmesi gereksiz. Uzatma, adın kendisinden türetilen kararlı bir
+ * ekle yapılıyor: aynı makine her açılışta aynı kimliği göndermeli, yoksa
+ * cihaz tarafındaki kayıtlarda tek kasa birden çok görünür.
+ */
+function normalizeId(raw: string, seed: string): string {
+  const cleaned = raw.trim().replace(/[^A-Za-z0-9._-]/g, '');
+  if (cleaned.length >= ID_MIN_LENGTH) return cleaned.slice(0, ID_MAX_LENGTH);
+
+  const suffix = createHash('sha256').update(seed || cleaned).digest('hex');
+  return `${cleaned}${suffix}`.slice(0, ID_MIN_LENGTH + 8);
 }
 
 export interface PcLinkResponse<T = Record<string, unknown>> {
@@ -135,6 +191,33 @@ export class PcLinkClient {
     return this.request('POST', `/v1/documents/${encodeURIComponent(documentId)}/cancel`, {});
   }
 
+  /**
+   * Cihazın istediği kimlik başlıkları.
+   *
+   * `X-HardwareId` boş GEÇİLEMEZ — cihaz isteği reddediyor. Yapılandırmada
+   * yoksa makinenin kendi adına düşüyoruz: bu başlığın işi çağıranı ayırt
+   * etmek ve kafedeki tek kasanın adı bunu yapar. Sabit bir dize yazmak,
+   * ikinci bir kasa eklendiği gün ikisini ayırt edilemez kılardı.
+   */
+  private identityHeaders(): Record<string, string> {
+    const machine = hostname();
+    return {
+      'X-HardwareId': normalizeId(this.target.hardwareId?.trim() || machine, machine),
+      'X-SoftwareId': normalizeId(
+        this.target.softwareId?.trim() || DEFAULT_SOFTWARE_ID,
+        DEFAULT_SOFTWARE_ID,
+      ),
+      ...(this.target.serialNo?.trim() ? { 'X-SerialNo': this.target.serialNo.trim() } : {}),
+    };
+  }
+
+  /** `GET /v1/settings` — sicil, mükellef bilgisi, lisans tarihi, departmanlar. */
+  settings(): Promise<
+    PcLinkResponse<{ serialNo?: string; licenceExpirationDate?: string }>
+  > {
+    return this.request('GET', '/v1/settings', undefined, STATUS_TIMEOUT_MS);
+  }
+
   private request<T>(
     method: 'GET' | 'POST' | 'PUT',
     path: string,
@@ -159,6 +242,7 @@ export class PcLinkClient {
           timeout: timeoutMs,
           headers: {
             accept: 'application/json',
+            ...this.identityHeaders(),
             ...(payload
               ? { 'content-type': 'application/json', 'content-length': payload.length }
               : {}),
