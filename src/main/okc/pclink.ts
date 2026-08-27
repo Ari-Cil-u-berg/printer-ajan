@@ -67,22 +67,32 @@ export interface PcLinkTarget {
   serialNo?: string;
 }
 
-/** Cihaz boş bırakılmasına izin vermiyor; kimliği yoksa da bir şey göndermeli. */
-const DEFAULT_SOFTWARE_ID = 'ari-adisyon-ajan';
+/**
+ * Kimlik başlıklarının uzunluk sınırları — HER BAŞLIK KENDİ KURALI.
+ *
+ * SAHADAN ÖĞRENİLDİ, dokümandan değil. OpenAPI tanımı bu başlıkları hiç
+ * kısıtlamıyor; cihaz sırayla şunları söyledi:
+ *
+ *   "X-HardwareId değeri boş olamaz"
+ *   "x-hardwareid değeri 8 karakterden kısa, 20 karakterden uzun olamaz"
+ *   "X-softwareId değeri 10 karakterden uzun olamaz"
+ *
+ * İkisine aynı aralığı uygulamıştık ve YANLIŞTI: `X-SoftwareId` on karakterden
+ * uzun olamıyor, yani `ari-adisyon-ajan` reddediliyor. Buradaki sayılar artık
+ * yalnızca cihazın söylediği kadarını anlatıyor — `X-SoftwareId` için bir ALT
+ * sınır hiç bildirilmedi, `X-HardwareId`'nin sekizi ihtiyatla korunuyor.
+ */
+const HARDWARE_ID_BOUNDS = { min: 8, max: 20 } as const;
+const SOFTWARE_ID_BOUNDS = { min: 8, max: 10 } as const;
 
 /**
- * Cihazın kimlik başlıklarına dayattığı uzunluk aralığı.
+ * Varsayılan yazılım kimliği — tam 10 karakter, üst sınırın kendisi.
  *
- * SAHADAN ÖĞRENİLDİ, dokümandan değil: OpenAPI tanımı bu başlıkları hiç
- * kısıtlamıyor, `X-HardwareId: kasa-1` gönderen istek ise
- * `"x-hardwareid değeri 8 karakterden kısa, 20 karakterden uzun olamaz"`
- * ile reddediliyor. Kısıt YALNIZCA `X-HardwareId` için doğrulandı;
- * `X-SoftwareId` de aynı ölçüye sokuluyor çünkü kuralın ona da uyduğunu
- * varsaymak, uymadığını sahada öğrenmekten ucuz — varsayılanımız zaten
- * aralıkta.
+ * `ari-adisyon-ajan` on altı karakterdi ve cihaz reddediyordu. Tire de yok:
+ * kısıtlar arttıkça en dar alfabede kalmak, bir sonraki kuralın bizi
+ * yakalamama ihtimalini artırıyor.
  */
-const ID_MIN_LENGTH = 8;
-const ID_MAX_LENGTH = 20;
+const DEFAULT_SOFTWARE_ID = 'ariadisyon';
 
 /**
  * Serbest metni cihazın kabul ettiği bir kimliğe çevirir.
@@ -93,12 +103,16 @@ const ID_MAX_LENGTH = 20;
  * ekle yapılıyor: aynı makine her açılışta aynı kimliği göndermeli, yoksa
  * cihaz tarafındaki kayıtlarda tek kasa birden çok görünür.
  */
-function normalizeId(raw: string, seed: string): string {
+function normalizeId(
+  raw: string,
+  seed: string,
+  bounds: { min: number; max: number },
+): string {
   const cleaned = raw.trim().replace(/[^A-Za-z0-9._-]/g, '');
-  if (cleaned.length >= ID_MIN_LENGTH) return cleaned.slice(0, ID_MAX_LENGTH);
+  if (cleaned.length >= bounds.min) return cleaned.slice(0, bounds.max);
 
   const suffix = createHash('sha256').update(seed || cleaned).digest('hex');
-  return `${cleaned}${suffix}`.slice(0, ID_MIN_LENGTH + 8);
+  return `${cleaned}${suffix}`.slice(0, Math.min(bounds.min + 8, bounds.max));
 }
 
 export interface PcLinkResponse<T = Record<string, unknown>> {
@@ -202,10 +216,15 @@ export class PcLinkClient {
   private identityHeaders(): Record<string, string> {
     const machine = hostname();
     return {
-      'X-HardwareId': normalizeId(this.target.hardwareId?.trim() || machine, machine),
+      'X-HardwareId': normalizeId(
+        this.target.hardwareId?.trim() || machine,
+        machine,
+        HARDWARE_ID_BOUNDS,
+      ),
       'X-SoftwareId': normalizeId(
         this.target.softwareId?.trim() || DEFAULT_SOFTWARE_ID,
         DEFAULT_SOFTWARE_ID,
+        SOFTWARE_ID_BOUNDS,
       ),
       ...(this.target.serialNo?.trim() ? { 'X-SerialNo': this.target.serialNo.trim() } : {}),
     };

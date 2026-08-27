@@ -215,14 +215,14 @@ test('her isteğe kimlik başlıklarını ekler', { skip: !tls }, async () => {
         // Aralıkta (8–20) bir değer: kısa olsaydı uzatılırdı ve bu test
         // uzatmayı değil, başlığın geçtiğini doğruluyor.
         hardwareId: 'kasa-birinci',
-        softwareId: 'ari-test',
+        softwareId: 'aritest01',
         serialNo: 'FU00001234',
       });
       await client.status();
     },
   );
   assert.equal(headers['x-hardwareid'], 'kasa-birinci');
-  assert.equal(headers['x-softwareid'], 'ari-test');
+  assert.equal(headers['x-softwareid'], 'aritest01');
   assert.equal(headers['x-serialno'], 'FU00001234');
 });
 
@@ -240,7 +240,7 @@ test('X-HardwareId asla boş gitmez', { skip: !tls }, async () => {
     },
   );
   assert.ok(headers['x-hardwareid'] && headers['x-hardwareid'].trim().length > 0);
-  assert.equal(headers['x-softwareid'], 'ari-adisyon-ajan');
+  assert.equal(headers['x-softwareid'], 'ariadisyon');
 });
 
 /** Uydurulmuş bir sicil, boş bırakmaktan daha kötü bir cevap alır. */
@@ -347,8 +347,51 @@ test('varsayılan kimlikler aralığın içinde kalır', { skip: !tls }, async (
       await client.status();
     },
   );
-  for (const key of ['x-hardwareid', 'x-softwareid']) {
-    const value = headers[key];
-    assert.ok(value.length >= 8 && value.length <= 20, `${key} aralık dışı: ${value.length}`);
-  }
+  // HER BAŞLIĞIN KENDİ SINIRI: cihaz `X-SoftwareId` için on karakteri
+  // aşmaya izin vermiyor, `X-HardwareId` için yirmiye kadar kabul ediyor.
+  const hw = headers['x-hardwareid'];
+  assert.ok(hw.length >= 8 && hw.length <= 20, `x-hardwareid aralık dışı: ${hw.length}`);
+  const sw = headers['x-softwareid'];
+  assert.ok(sw.length >= 8 && sw.length <= 10, `x-softwareid aralık dışı: ${sw.length}`);
+});
+
+/**
+ * `X-SoftwareId` ON KARAKTERİ AŞAMAZ — `X-HardwareId`'den farklı bir kural.
+ * İkisine aynı aralığı uygulamak `ari-adisyon-ajan` (16) gönderilmesine ve
+ * cihazın her isteği reddetmesine yol açmıştı.
+ */
+test('uzun bir SoftwareId 10 karaktere kesilir', { skip: !tls }, async () => {
+  let headers = null;
+  await withDevice(
+    (req, res) => {
+      headers = req.headers;
+      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+    },
+    async (port) => {
+      const client = new PcLinkClient({
+        host: '127.0.0.1',
+        port,
+        softwareId: 'ari-adisyon-ajan',
+      });
+      await client.status();
+    },
+  );
+  assert.equal(headers['x-softwareid'].length, 10);
+});
+
+/** Uzatma da üst sınırı aşmamalı: kısa bir SoftwareId 10'u geçemez. */
+test('uzatılan SoftwareId üst sınırı aşmaz', { skip: !tls }, async () => {
+  let headers = null;
+  await withDevice(
+    (req, res) => {
+      headers = req.headers;
+      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+    },
+    async (port) => {
+      const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: 'ari' });
+      await client.status();
+    },
+  );
+  const sw = headers['x-softwareid'];
+  assert.ok(sw.length >= 8 && sw.length <= 10, `aralık dışı: ${sw.length}`);
 });
