@@ -110,13 +110,34 @@ function normalizeId(
   return `${cleaned}${suffix}`.slice(0, Math.min(bounds.min + 8, bounds.max));
 }
 
+/**
+ * Cihazın cevap zarfı.
+ *
+ * YÜK HER ZAMAN `data` ALTINDA. Doküman metni alanları düz bir tabloda
+ * sayıyor — "documentId | string | Cihaz tarafından belgeye atanan tekil ID" —
+ * ve biz onları kökte okuyorduk. Şemada ise hepsi `data`'nın içinde ve gerçek
+ * cihaz şemaya uyuyor.
+ *
+ * Tek bir hata, üst üste binen belirtiler üretti: `documentId` hiç okunamadı
+ * ("Yazarkasa belge açmadı" — oysa cihaz fişi açmıştı), `state` hiç gelmedi
+ * (açık belge uyarısı hiç çalışmadı), `serialNo` hiç öğrenilemedi (ve
+ * `X-SerialNo` gönderilemediği için satış "sicil doğrulanamadı" ile
+ * reddedildi). Her birini ayrı ayrı kovalamak, tek bir yanlış okumayı üç
+ * farklı arıza sanmak olurdu.
+ *
+ * `body` ZARFIN KENDİSİ kalıyor (`status`, `error`, `metadata`), `data` ise
+ * yük. İkisini birleştirmek, bir gün `data.status` gelen bir uçta hangisinin
+ * kazandığını belirsizleştirirdi.
+ */
 export interface PcLinkResponse<T = Record<string, unknown>> {
   httpStatus: number;
-  body: T & {
+  body: {
     status?: string;
     error?: { code?: string; title?: string; description?: string };
     metadata?: { timestamp?: string; sfaVersion?: string };
   };
+  /** Cevabın yükü. Zarfta `data` yoksa boş nesne. */
+  data: T;
   /** İlk bağlantıda öğrenilen parmak izi — çağıran bunu kaydeder. */
   fingerprint: string;
 }
@@ -300,9 +321,11 @@ export class PcLinkClient {
               return;
             }
 
+            const envelope = parsed as PcLinkResponse<T>['body'] & { data?: T };
             resolve({
               httpStatus: res.statusCode ?? 0,
-              body: parsed as PcLinkResponse<T>['body'],
+              body: envelope,
+              data: (envelope.data ?? {}) as T,
               fingerprint,
             });
           });

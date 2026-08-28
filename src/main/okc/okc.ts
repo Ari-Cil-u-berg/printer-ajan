@@ -31,11 +31,6 @@ interface PendingSale {
   startedAt: string;
 }
 
-/** Cihazın hata zarfı — `request()` bunu çözerek döndürüyor, fırlatarak değil. */
-interface PcLinkErrorBody {
-  error?: { code?: string; description?: string; title?: string };
-}
-
 export class OkcManager extends EventEmitter {
   private client: PcLinkClient | null = null;
   private health: OkcHealth = { configured: false };
@@ -143,7 +138,7 @@ export class OkcManager extends EventEmitter {
       this.rememberFingerprint(response.fingerprint);
       await this.learnSerialNo();
 
-      const body = response.body as { state?: string; activeDocument?: unknown };
+      const body = response.data as { state?: string; activeDocument?: unknown };
       /*
        * CİHAZIN KENDİ SEBEBİ, kırmızı bir ışık değil.
        *
@@ -154,8 +149,8 @@ export class OkcManager extends EventEmitter {
        * "X-HardwareId değeri boş olamaz", "X-softwareId eşleşmiyor". Kurulumu
        * yapan kişi kasada duruyor; o cümleyi görmeli.
        */
-      const failure =
-        response.httpStatus === 200 ? undefined : (body as PcLinkErrorBody).error?.description;
+      // Hata ZARFTA durur, yükte değil — `data` başarılı bir cevabın içeriği.
+      const failure = response.httpStatus === 200 ? undefined : errorText(response.body);
       this.health = {
         configured: true,
         ok: response.httpStatus === 200,
@@ -220,7 +215,7 @@ export class OkcManager extends EventEmitter {
     try {
       const started = await client.startDocument('SALE');
       this.rememberFingerprint(started.fingerprint);
-      const id = started.body.documentId;
+      const id = started.data.documentId;
       if (!id) {
         return {
           saleId: request.saleId,
@@ -284,9 +279,9 @@ export class OkcManager extends EventEmitter {
       const response = await client.finalizeDocument(documentId, document);
       this.rememberFingerprint(response.fingerprint);
 
-      const receiptNo = response.body.receiptNo;
+      const receiptNo = response.data.receiptNo;
       if (response.httpStatus === 200 && receiptNo) {
-        return { status: 'APPROVED', receiptNo, documentId, totals: response.body.totals };
+        return { status: 'APPROVED', receiptNo, documentId, totals: response.data.totals };
       }
 
       if (response.httpStatus === 206) {
@@ -378,7 +373,7 @@ export class OkcManager extends EventEmitter {
     if (!this.client || !this.config || this.config.serialNo) return;
     try {
       const response = await this.client.settings();
-      const serialNo = response.body.serialNo?.trim();
+      const serialNo = response.data.serialNo?.trim();
       if (!serialNo) return;
       this.config = { ...this.config, serialNo };
       this.persist(this.config);

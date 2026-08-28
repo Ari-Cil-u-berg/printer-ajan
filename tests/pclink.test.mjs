@@ -81,12 +81,12 @@ function json(res, status, body) {
 
 test('kendinden imzalı sertifikayı kabul eder ve parmak izini döner', { skip: !tls }, async () => {
   await withDevice(
-    (_req, res) => json(res, 200, { status: 'SUCCESS', state: 'IDLE' }),
+    (_req, res) => json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } }),
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port });
       const response = await client.status();
       assert.equal(response.httpStatus, 200);
-      assert.equal(response.body.state, 'IDLE');
+      assert.equal(response.data.state, 'IDLE');
       // Parmak izi olmadan sabitleme yapılamaz.
       assert.match(response.fingerprint, /^[0-9A-F]{2}(:[0-9A-F]{2})+$/);
     },
@@ -95,7 +95,7 @@ test('kendinden imzalı sertifikayı kabul eder ve parmak izini döner', { skip:
 
 test('parmak izi değişirse bağlantıyı REDDEDER', { skip: !tls }, async () => {
   await withDevice(
-    (_req, res) => json(res, 200, { status: 'SUCCESS', state: 'IDLE' }),
+    (_req, res) => json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } }),
     async (port) => {
       // Aynı ağdaki başka bir makine yazarkasa taklidi yapamamalı.
       const client = new PcLinkClient({
@@ -117,22 +117,24 @@ test('belge açar ve sonlandırır', { skip: !tls }, async () => {
       req.on('end', () => {
         seen.push({ method: req.method, url: req.url, body: Buffer.concat(chunks).toString() });
         if (req.method === 'POST' && req.url === '/v1/documents') {
-          return json(res, 200, { status: 'SUCCESS', documentId: 'doc-1' });
+          return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-1' } });
         }
         return json(res, 200, {
           status: 'SUCCESS',
-          receiptNo: '0042_0007',
-          totals: { documentTotal: '90.00', vatTotal: '8.18' },
+          data: {
+            receiptNo: '0042_0007',
+            totals: { documentTotal: '90.00', vatTotal: '8.18' },
+          },
         });
       });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port });
       const started = await client.startDocument('SALE');
-      assert.equal(started.body.documentId, 'doc-1');
+      assert.equal(started.data.documentId, 'doc-1');
 
       const done = await client.finalizeDocument('doc-1', { items: [], payments: [] });
-      assert.equal(done.body.receiptNo, '0042_0007');
+      assert.equal(done.data.receiptNo, '0042_0007');
 
       assert.deepEqual(
         seen.map((s) => `${s.method} ${s.url}`),
@@ -152,7 +154,7 @@ test('206 durumu ham hâliyle taşınır — ödeme alındı, belge kapanmadı',
       // 206'yı başarı ya da hata diye ezmek, alınmış ödemeyi kaybettirirdi:
       // kararı veren katman ham durumu görmeli.
       assert.equal(response.httpStatus, 206);
-      assert.equal(response.body.receiptNo, undefined);
+      assert.equal(response.data.receiptNo, undefined);
     },
   );
 });
@@ -206,7 +208,7 @@ test('her isteğe kimlik başlıklarını ekler', { skip: !tls }, async () => {
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({
@@ -232,7 +234,7 @@ test('X-HardwareId asla boş gitmez', { skip: !tls }, async () => {
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId: '   ' });
@@ -252,7 +254,7 @@ test('VKN girilmemişse X-SoftwareId hiç gönderilmez', { skip: !tls }, async (
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port });
@@ -268,7 +270,7 @@ test('sicil bilinmiyorsa X-SerialNo hiç gönderilmez', { skip: !tls }, async ()
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port });
@@ -283,12 +285,12 @@ test('ayarları okur — sicil numarası buradan öğreniliyor', { skip: !tls },
   await withDevice(
     (req, res) => {
       seenPath = req.url;
-      json(res, 200, { status: 'SUCCESS', serialNo: 'FU00009876' });
+      json(res, 200, { status: 'SUCCESS', data: { serialNo: 'FU00009876' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port });
       const response = await client.settings();
-      assert.equal(response.body.serialNo, 'FU00009876');
+      assert.equal(response.data.serialNo, 'FU00009876');
     },
   );
   assert.equal(seenPath, '/v1/settings');
@@ -304,7 +306,7 @@ test('kısa bir HardwareId cihazın aralığına uzatılır', { skip: !tls }, as
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId: 'kasa-1' });
@@ -323,7 +325,7 @@ test('uzatılan HardwareId kararlıdır', { skip: !tls }, async () => {
     await withDevice(
       (req, res) => {
         seen.push(req.headers['x-hardwareid']);
-        json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+        json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
       },
       async (port) => {
         const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId: 'kasa' });
@@ -339,7 +341,7 @@ test('uzun bir HardwareId 20 karaktere kesilir', { skip: !tls }, async () => {
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({
@@ -359,7 +361,7 @@ test('varsayılan kimlikler aralığın içinde kalır', { skip: !tls }, async (
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port });
@@ -385,7 +387,7 @@ test('VKN olduğu gibi gönderilir', { skip: !tls }, async () => {
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: '6310077423' });
@@ -401,7 +403,7 @@ test('11 haneli kimlik numarası kırpılmaz', { skip: !tls }, async () => {
   await withDevice(
     (req, res) => {
       headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
       const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: '12345678901' });
@@ -409,4 +411,53 @@ test('11 haneli kimlik numarası kırpılmaz', { skip: !tls }, async () => {
     },
   );
   assert.equal(headers['x-softwareid'], '12345678901');
+});
+
+// --- cevap zarfı -------------------------------------------------------------
+
+/**
+ * YÜK HER ZAMAN `data` ALTINDA — ve bu bir gün pahalıya patladı.
+ *
+ * PC Link dokümanının metni alanları düz bir tabloda sayıyor ("documentId |
+ * string | Cihaz tarafından belgeye atanan tekil ID") ve biz onları kökte
+ * okuyorduk. Şemada ise hepsi `data`'nın içinde; gerçek cihaz şemaya uyuyor.
+ *
+ * Tek bir yanlış okuma, birbirinden bağımsız görünen üç arıza üretti:
+ * `documentId` hiç okunamadı ("Yazarkasa belge açmadı" — oysa cihazın
+ * ekranında fiş açıktı), `state` hiç gelmedi (açık belge uyarısı çalışmadı),
+ * `serialNo` öğrenilemedi ve `X-SerialNo` gönderilemediği için satış "sicil
+ * doğrulanamadı" ile reddedildi.
+ */
+test('yük `data` altından okunur, zarf ayrı durur', { skip: !tls }, async () => {
+  await withDevice(
+    (_req, res) =>
+      json(res, 200, {
+        status: 'SUCCESS',
+        data: { documentId: 'doc-42' },
+        metadata: { sfaVersion: '1.2.3', timestamp: '2026-08-28T10:00:00+03:00' },
+      }),
+    async (port) => {
+      const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: '6310077423' });
+      const response = await client.startDocument('SALE');
+
+      assert.equal(response.data.documentId, 'doc-42');
+      // Zarf yükle karışmamalı: `status` ve `metadata` orada kalır.
+      assert.equal(response.body.status, 'SUCCESS');
+      assert.equal(response.body.metadata.sfaVersion, '1.2.3');
+      // Kökte yük ARANMAZ — eski hatanın kendisi buydu.
+      assert.equal(response.body.documentId, undefined);
+    },
+  );
+});
+
+/** `data` hiç gelmezse çağıran patlamamalı; boş nesne görmeli. */
+test('data yoksa boş nesne döner', { skip: !tls }, async () => {
+  await withDevice(
+    (_req, res) => json(res, 200, { status: 'SUCCESS' }),
+    async (port) => {
+      const client = new PcLinkClient({ host: '127.0.0.1', port });
+      const response = await client.status();
+      assert.deepEqual(response.data, {});
+    },
+  );
 });
