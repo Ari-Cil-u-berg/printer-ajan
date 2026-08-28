@@ -1,7 +1,7 @@
 {
   "name": "ari-adisyon-ajan",
   "productName": "Ari Adisyon Yazıcı Ajanı",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Ari Adisyon agent — connects local thermal printers and Hugin fiscal devices to the cloud POS.",
   "main": "dist/main/index.js",
   "author": {
