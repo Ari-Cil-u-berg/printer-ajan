@@ -177,6 +177,8 @@
                 <dd><input id="okcSoftwareId" type="text" placeholder="6310077423" inputmode="numeric" autocomplete="off" /></dd>
                 <dt>Kasa kimliği</dt>
                 <dd><input id="okcHardwareId" type="text" placeholder="boş bırakılabilir" autocomplete="off" /></dd>
+                <dt>Sicil no</dt>
+                <dd><input id="okcSerialNo" type="text" placeholder="FU00031401 — boşsa cihazdan okunur" autocomplete="off" /></dd>
               </dl>
               <p class="help">
                 <b>VKN</b> (<code>X-SoftwareId</code>) — cihazda PC Link uygulamasını
@@ -185,6 +187,8 @@
                 <b>Kasa kimliği</b> (<code>X-HardwareId</code>) bu bilgisayarı tanıtır; boş
                 bırakırsanız makinenin adı kullanılır. Cihaz 8–20 karakter istiyor, kısa yazarsanız
                 otomatik uzatılır.
+                <b>Sicil no</b> (<code>X-SerialNo</code>) boş bırakılırsa cihazdan okunur; cihaz
+                "sicil doğrulanamadı" diyorsa markanın verdiği numarayı elle yazın.
               </p>
               <div class="row">
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>

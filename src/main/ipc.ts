@@ -87,6 +87,7 @@ function assertOkc(value: unknown): OkcConfig {
     typeof value === 'string' ? value.trim().slice(0, 64) : '';
   const softwareId = text(c.softwareId);
   const hardwareId = text(c.hardwareId);
+  const serialNo = text(c.serialNo);
 
   return {
     host,
@@ -98,6 +99,12 @@ function assertOkc(value: unknown): OkcConfig {
     // yalnızca kırpıp saklıyoruz, çünkü kuralı bilen taraf orası.
     ...(softwareId ? { softwareId } : {}),
     ...(hardwareId ? { hardwareId } : {}),
+    // ELLE DE GİRİLEBİLİR, yalnızca cihazdan öğrenilmez. Öğrenme
+    // `GET /v1/settings`'e bağlı ve o çağrının kendisi de kimlik başlıkları
+    // istiyor; başarısız olduğunda `X-SerialNo` hiç gitmiyor ve cihaz satışı
+    // "sicil doğrulanamadı" ile reddediyor. Kurulumcunun elinde numara varsa
+    // (markadan, cihazın etiketinden) o kısır döngüyü kırabilmeli.
+    ...(serialNo ? { serialNo } : {}),
     // Parmak izi KULLANICIDAN GELMEZ: cihazdan öğrenilir. Dışarıdan kabul
     // etmek, sabitlemenin anlamını ortadan kaldırırdı.
     ...(c.fingerprint && typeof c.fingerprint === 'string' ? { fingerprint: c.fingerprint } : {}),
@@ -149,10 +156,9 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
       const current = agent.okc.getConfig();
       if (next && current && current.host === next.host) {
         if (current.fingerprint) next.fingerprint = current.fingerprint;
-        // SİCİL DE KORUNUR, aynı gerekçeyle: cihazdan öğrenilen bir değer ve
-        // formda karşılığı yok. Korunmasaydı her kaydetme onu siler, bir
-        // sonraki sağlık kontrolüne kadar istekler `X-SerialNo` başlıksız
-        // giderdi — kendi kendine düzelen ama sebebi görünmeyen bir kesinti.
+        // FORMDA BOŞ BIRAKILDIYSA öğrenilen sicil korunur. Kullanıcı bir
+        // numara yazdıysa onunki kazanır: cihazdan okunan değer yanlışsa
+        // düzeltebilmeli, doğruysa zaten aynısını yazacak.
         if (current.serialNo && !next.serialNo) next.serialNo = current.serialNo;
       }
       agent.setOkc(next);

@@ -34,7 +34,7 @@ interface OkcConfig {
   softwareId?: string;
   /** `X-HardwareId` — bu bilgisayarı tanıtır. Boşsa makine adı kullanılır. */
   hardwareId?: string;
-  /** Cihazdan öğrenilir, formda karşılığı yok. */
+  /** `X-SerialNo` — boşsa cihazdan öğrenilir, elle de girilebilir. */
   serialNo?: string;
 }
 interface OkcHealth {
@@ -311,6 +311,7 @@ function renderOkc(s: StatusSnapshot): void {
   const labelInput = $<HTMLInputElement>('okcLabel');
   const softwareInput = $<HTMLInputElement>('okcSoftwareId');
   const hardwareInput = $<HTMLInputElement>('okcHardwareId');
+  const serialInput = $<HTMLInputElement>('okcSerialNo');
 
   // Yazarken üstüne yazma — kullanıcı IP girerken durum yenilenirse alan
   // sıfırlanmamalı.
@@ -319,6 +320,9 @@ function renderOkc(s: StatusSnapshot): void {
   if (document.activeElement !== labelInput) labelInput.value = s.okc?.label ?? '';
   if (document.activeElement !== softwareInput) softwareInput.value = s.okc?.softwareId ?? '';
   if (document.activeElement !== hardwareInput) hardwareInput.value = s.okc?.hardwareId ?? '';
+  // Cihazdan okunmuş sicil de burada görünür: kurulumcu markanın verdiği
+  // numarayla karşılaştırabilmeli, "eşleşmiyor" hatası tam bu farkı anlatıyor.
+  if (document.activeElement !== serialInput) serialInput.value = s.okc?.serialNo ?? '';
 
   const h = s.okcHealth;
   const stateEl = $('okcState');
@@ -373,6 +377,7 @@ $('okcSaveBtn').addEventListener('click', async () => {
     label: $<HTMLInputElement>('okcLabel').value.trim(),
     softwareId: $<HTMLInputElement>('okcSoftwareId').value.trim(),
     hardwareId: $<HTMLInputElement>('okcHardwareId').value.trim(),
+    serialNo: $<HTMLInputElement>('okcSerialNo').value.trim(),
   });
   btn.disabled = false;
 
