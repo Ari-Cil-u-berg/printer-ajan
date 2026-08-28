@@ -31,6 +31,11 @@ interface PendingSale {
   startedAt: string;
 }
 
+/** Cihazın hata zarfı — `request()` bunu çözerek döndürüyor, fırlatarak değil. */
+interface PcLinkErrorBody {
+  error?: { code?: string; description?: string; title?: string };
+}
+
 export class OkcManager extends EventEmitter {
   private client: PcLinkClient | null = null;
   private health: OkcHealth = { configured: false };
@@ -122,9 +127,22 @@ export class OkcManager extends EventEmitter {
       await this.learnSerialNo();
 
       const body = response.body as { state?: string; activeDocument?: unknown };
+      /*
+       * CİHAZIN KENDİ SEBEBİ, kırmızı bir ışık değil.
+       *
+       * `request()` her HTTP cevabını çözüyor — hata zarfı da dahil — çünkü
+       * `206` gibi durumlar bir arıza değil, taşınması gereken bilgi. Bedeli
+       * şuydu: 401 dönen bir cevapta sağlık `ok: false` oluyor ve SEBEP hiçbir
+       * yere yazılmıyordu. Oysa cihaz tam olarak ne istediğini söylüyor —
+       * "X-HardwareId değeri boş olamaz", "X-softwareId eşleşmiyor". Kurulumu
+       * yapan kişi kasada duruyor; o cümleyi görmeli.
+       */
+      const failure =
+        response.httpStatus === 200 ? undefined : (body as PcLinkErrorBody).error?.description;
       this.health = {
         configured: true,
         ok: response.httpStatus === 200,
+        ...(failure ? { error: failure } : {}),
         state: body.state,
         // Açık belge kasiyere GÖSTERİLİR: cihazda yarım kalmış bir mali belge
         // varken yeni satış başlatılamaz ve sebebini bilmeden bakmak, cihazı

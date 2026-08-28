@@ -268,7 +268,7 @@ export class BridgeLink extends EventEmitter {
       this.emit('unauthorized');
       throw new Error('Köprü anahtarı geçersiz');
     }
-    if (!res.ok) throw new Error(`Köprü token'ı alınamadı (${res.status})`);
+    if (!res.ok) throw new Error(`Köprü token'ı alınamadı — ${await reason(res)}`);
 
     const body = (await res.json()) as { data?: { token?: string; expiresIn?: number } };
     const token = body.data?.token;
@@ -352,4 +352,30 @@ function origin(apiBaseUrl: string): string {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Sunucunun söylediği sebebi kurulumcuya taşır.
+ *
+ * Eskiden yalnızca durum kodu loglanıyordu — `"Köprü token'ı alınamadı (409)"`.
+ * O satır, sunucuda `BRIDGE_JWT_SECRET` tanımlı olmadığında dakikalarca
+ * tekrarlanıyor ve sebebini hiçbir yerde söylemiyordu; oysa API cevabın
+ * gövdesinde tam olarak bunu yazıyor. Kurulumu yapan kişi kasada duruyor,
+ * sunucunun log'una bakamıyor: mesaj onun görebildiği yere ulaşmalı.
+ *
+ * Gövde okunamazsa durum koduna düşüyor — teşhis mesajı, teşhis edilmesi
+ * gereken ikinci bir arıza kaynağı olmamalı.
+ */
+async function reason(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as {
+      message?: unknown;
+      error?: { message?: unknown };
+    };
+    const text = body.error?.message ?? body.message;
+    if (typeof text === 'string' && text.trim()) return `${text} (${res.status})`;
+  } catch {
+    // Gövde yok ya da JSON değil.
+  }
+  return `HTTP ${res.status}`;
 }
