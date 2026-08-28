@@ -55,7 +55,18 @@ export interface PcLinkTarget {
    * çalışmaması demekti — sağlık göstergesi kırmızı, sebebi görünmez.
    */
   hardwareId?: string;
-  /** `X-SoftwareId` — çağıran uygulamayı tanıtır. Aynı sebeple gönderiliyor. */
+  /**
+   * `X-SoftwareId` — PC LINK UYGULAMASINA GİRİLEN VKN.
+   *
+   * Uydurulmuş bir etiket DEĞİL: cihaz, PC Link ilk açıldığında yazılan vergi
+   * numarasını bekliyor ve farklı bir değer gelirse `"x-softwareid
+   * eşleşmiyor"` diyor. Bunu sahada öğrendik — önce uzunluk kuralını
+   * ("10 karakterden uzun olamaz") bir biçim kısıtı sandık, oysa on hane bir
+   * VKN'nin kendi uzunluğuymuş.
+   *
+   * Sonucu: bu değer NORMALLEŞTİRİLMEZ. Kırpmak ya da uzatmak, eşleşmesi
+   * gereken bir numarayı bozmak demek.
+   */
   softwareId?: string;
   /**
    * `X-SerialNo` — cihazın kendi sicili.
@@ -68,31 +79,15 @@ export interface PcLinkTarget {
 }
 
 /**
- * Kimlik başlıklarının uzunluk sınırları — HER BAŞLIK KENDİ KURALI.
- *
- * SAHADAN ÖĞRENİLDİ, dokümandan değil. OpenAPI tanımı bu başlıkları hiç
- * kısıtlamıyor; cihaz sırayla şunları söyledi:
+ * `X-HardwareId` uzunluk aralığı — cihazdan öğrenildi, dokümandan değil.
  *
  *   "X-HardwareId değeri boş olamaz"
  *   "x-hardwareid değeri 8 karakterden kısa, 20 karakterden uzun olamaz"
- *   "X-softwareId değeri 10 karakterden uzun olamaz"
  *
- * İkisine aynı aralığı uygulamıştık ve YANLIŞTI: `X-SoftwareId` on karakterden
- * uzun olamıyor, yani `ari-adisyon-ajan` reddediliyor. Buradaki sayılar artık
- * yalnızca cihazın söylediği kadarını anlatıyor — `X-SoftwareId` için bir ALT
- * sınır hiç bildirilmedi, `X-HardwareId`'nin sekizi ihtiyatla korunuyor.
+ * Bu başlık çağıran makineyi TANITIYOR: değeri biz seçiyoruz ve cihaz yalnızca
+ * biçimine bakıyor. `X-SoftwareId` ise öyle değil — aşağıya bakın.
  */
 const HARDWARE_ID_BOUNDS = { min: 8, max: 20 } as const;
-const SOFTWARE_ID_BOUNDS = { min: 8, max: 10 } as const;
-
-/**
- * Varsayılan yazılım kimliği — tam 10 karakter, üst sınırın kendisi.
- *
- * `ari-adisyon-ajan` on altı karakterdi ve cihaz reddediyordu. Tire de yok:
- * kısıtlar arttıkça en dar alfabede kalmak, bir sonraki kuralın bizi
- * yakalamama ihtimalini artırıyor.
- */
-const DEFAULT_SOFTWARE_ID = 'ariadisyon';
 
 /**
  * Serbest metni cihazın kabul ettiği bir kimliğe çevirir.
@@ -215,17 +210,20 @@ export class PcLinkClient {
    */
   private identityHeaders(): Record<string, string> {
     const machine = hostname();
+    const softwareId = this.target.softwareId?.trim();
     return {
       'X-HardwareId': normalizeId(
         this.target.hardwareId?.trim() || machine,
         machine,
         HARDWARE_ID_BOUNDS,
       ),
-      'X-SoftwareId': normalizeId(
-        this.target.softwareId?.trim() || DEFAULT_SOFTWARE_ID,
-        DEFAULT_SOFTWARE_ID,
-        SOFTWARE_ID_BOUNDS,
-      ),
+      // OLDUĞU GİBİ, düzeltilmeden. Bu başlık bir biçim değil, bir EŞLEŞME:
+      // PC Link uygulaması ilk açıldığında girilen VKN ne ise başlık da o
+      // olmalı. Uzunluğa göre kırpmak ya da uzatmak, eşleşmesi gereken bir
+      // değeri bozmak demek — 11 haneli bir TCKN'yi 10'a kesmek, garanti bir
+      // "eşleşmiyor" üretirdi. Boşsa hiç gönderilmiyor: uydurulmuş bir değer,
+      // cihazın "boş olamaz" demesinden daha yanıltıcı bir hata veriyor.
+      ...(softwareId ? { 'X-SoftwareId': softwareId } : {}),
       ...(this.target.serialNo?.trim() ? { 'X-SerialNo': this.target.serialNo.trim() } : {}),
     };
   }

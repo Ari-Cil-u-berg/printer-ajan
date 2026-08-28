@@ -215,18 +215,18 @@ test('her isteğe kimlik başlıklarını ekler', { skip: !tls }, async () => {
         // Aralıkta (8–20) bir değer: kısa olsaydı uzatılırdı ve bu test
         // uzatmayı değil, başlığın geçtiğini doğruluyor.
         hardwareId: 'kasa-birinci',
-        softwareId: 'aritest01',
+        softwareId: '6310077423',
         serialNo: 'FU00001234',
       });
       await client.status();
     },
   );
   assert.equal(headers['x-hardwareid'], 'kasa-birinci');
-  assert.equal(headers['x-softwareid'], 'aritest01');
+  assert.equal(headers['x-softwareid'], '6310077423');
   assert.equal(headers['x-serialno'], 'FU00001234');
 });
 
-/** Boş bırakılan alan cihazın reddettiği durum; varsayılana düşmek zorunda. */
+/** Boşluk yazılmış bir kasa adı, boş bir başlık kadar reddedilir. */
 test('X-HardwareId asla boş gitmez', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
@@ -240,7 +240,26 @@ test('X-HardwareId asla boş gitmez', { skip: !tls }, async () => {
     },
   );
   assert.ok(headers['x-hardwareid'] && headers['x-hardwareid'].trim().length > 0);
-  assert.equal(headers['x-softwareid'], 'ariadisyon');
+});
+
+/**
+ * VKN UYDURULMAZ. `X-SoftwareId`, PC Link'e girilen vergi numarasıyla birebir
+ * eşleşmek zorunda; yerine bir varsayılan koymak, cihazın her isteği
+ * "eşleşmiyor" ile reddetmesi ve sebebin uydurduğumuz değer olması demekti.
+ */
+test('VKN girilmemişse X-SoftwareId hiç gönderilmez', { skip: !tls }, async () => {
+  let headers = null;
+  await withDevice(
+    (req, res) => {
+      headers = req.headers;
+      json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
+    },
+    async (port) => {
+      const client = new PcLinkClient({ host: '127.0.0.1', port });
+      await client.status();
+    },
+  );
+  assert.equal(headers['x-softwareid'], undefined);
 });
 
 /** Uydurulmuş bir sicil, boş bırakmaktan daha kötü bir cevap alır. */
@@ -347,20 +366,21 @@ test('varsayılan kimlikler aralığın içinde kalır', { skip: !tls }, async (
       await client.status();
     },
   );
-  // HER BAŞLIĞIN KENDİ SINIRI: cihaz `X-SoftwareId` için on karakteri
-  // aşmaya izin vermiyor, `X-HardwareId` için yirmiye kadar kabul ediyor.
+  // Yalnızca `X-HardwareId` biçime göre düzeltiliyor: onu BİZ seçiyoruz.
+  // `X-SoftwareId` bir eşleşme değeri ve varsayılanı yok.
   const hw = headers['x-hardwareid'];
   assert.ok(hw.length >= 8 && hw.length <= 20, `x-hardwareid aralık dışı: ${hw.length}`);
-  const sw = headers['x-softwareid'];
-  assert.ok(sw.length >= 8 && sw.length <= 10, `x-softwareid aralık dışı: ${sw.length}`);
 });
 
 /**
- * `X-SoftwareId` ON KARAKTERİ AŞAMAZ — `X-HardwareId`'den farklı bir kural.
- * İkisine aynı aralığı uygulamak `ari-adisyon-ajan` (16) gönderilmesine ve
- * cihazın her isteği reddetmesine yol açmıştı.
+ * `X-SoftwareId` OLDUĞU GİBİ GİDER — kırpılmaz, uzatılmaz.
+ *
+ * Bu başlık bir biçim değil bir EŞLEŞME: cihaz, PC Link'e girilen VKN'yi
+ * bekliyor. Uzunluk kuralını ("10 karakterden uzun olamaz") bir biçim kısıtı
+ * sanıp normalleştirmiştik; oysa on hane, bir VKN'nin kendi uzunluğuymuş.
+ * 11 haneli bir TCKN'yi 10'a kesmek garanti bir "eşleşmiyor" üretirdi.
  */
-test('uzun bir SoftwareId 10 karaktere kesilir', { skip: !tls }, async () => {
+test('VKN olduğu gibi gönderilir', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
     (req, res) => {
@@ -368,19 +388,15 @@ test('uzun bir SoftwareId 10 karaktere kesilir', { skip: !tls }, async () => {
       json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
     },
     async (port) => {
-      const client = new PcLinkClient({
-        host: '127.0.0.1',
-        port,
-        softwareId: 'ari-adisyon-ajan',
-      });
+      const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: '6310077423' });
       await client.status();
     },
   );
-  assert.equal(headers['x-softwareid'].length, 10);
+  assert.equal(headers['x-softwareid'], '6310077423');
 });
 
-/** Uzatma da üst sınırı aşmamalı: kısa bir SoftwareId 10'u geçemez. */
-test('uzatılan SoftwareId üst sınırı aşmaz', { skip: !tls }, async () => {
+/** 11 haneli TCKN de kesilmemeli — kesilirse eşleşme imkânsız olur. */
+test('11 haneli kimlik numarası kırpılmaz', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
     (req, res) => {
@@ -388,10 +404,9 @@ test('uzatılan SoftwareId üst sınırı aşmaz', { skip: !tls }, async () => {
       json(res, 200, { status: 'SUCCESS', state: 'IDLE' });
     },
     async (port) => {
-      const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: 'ari' });
+      const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: '12345678901' });
       await client.status();
     },
   );
-  const sw = headers['x-softwareid'];
-  assert.ok(sw.length >= 8 && sw.length <= 10, `aralık dışı: ${sw.length}`);
+  assert.equal(headers['x-softwareid'], '12345678901');
 });

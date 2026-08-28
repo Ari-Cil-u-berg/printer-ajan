@@ -30,7 +30,7 @@ interface OkcConfig {
   port: number;
   fingerprint?: string;
   label?: string;
-  /** `X-SoftwareId` — Hugin'in verdiği kimlik. Uydurulamaz. */
+  /** `X-SoftwareId` — PC Link'e girilen VKN. Birebir eşleşmeli. */
   softwareId?: string;
   /** `X-HardwareId` — bu bilgisayarı tanıtır. Boşsa makine adı kullanılır. */
   hardwareId?: string;

@@ -121,6 +121,23 @@ export class OkcManager extends EventEmitter {
       return this.health;
     }
 
+    // VKN OLMADAN İSTEK GÖNDERMİYORUZ. Cihaz `X-SoftwareId`'yi zorunlu
+    // tutuyor ve PC Link'e girilen VKN ile eşleşmesini bekliyor; boş
+    // gönderdiğimizde dönen `"boş olamaz"`, kurulumcuya ne yapacağını
+    // söylemiyor. Eksik olduğunu BİZ biliyoruz — cihazın ağzından duymayı
+    // beklemek, cevabı olan bir soruyu başkasına sordurmak olurdu.
+    if (!this.config.softwareId?.trim()) {
+      this.health = {
+        configured: true,
+        ok: false,
+        error: 'Yazılım kimliği girilmedi — PC Link uygulamasına yazdığınız VKN olmalı',
+        checkedAt: new Date().toISOString(),
+        pendingSale: this.readPending()?.saleId,
+      };
+      this.emit('changed');
+      return this.health;
+    }
+
     try {
       const response = await this.client.status();
       this.rememberFingerprint(response.fingerprint);

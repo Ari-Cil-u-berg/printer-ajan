@@ -208,7 +208,10 @@ export interface OkcConfig {
    * bkz. `pclink.ts`.
    */
   hardwareId?: string;
-  /** `X-SoftwareId`. Boşsa `ari-adisyon-ajan`. */
+  /**
+   * `X-SoftwareId` — PC Link uygulamasına girilen VKN. Zorunlu ve birebir
+   * eşleşmeli; boşsa istek hiç gönderilmiyor (bkz. `okc.ts` sağlık kontrolü).
+   */
   softwareId?: string;
   /**
    * Cihazın sicil numarası, `X-SerialNo` başlığında gider.
