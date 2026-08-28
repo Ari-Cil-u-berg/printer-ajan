@@ -229,6 +229,14 @@ export interface OkcHealth {
   state?: string;
   /** Cihazda yarım kalmış bir belge var mı. */
   hasOpenDocument?: boolean;
+  /**
+   * Cihazda açık duran belgenin kimliği — ajan kaydı olmasa bile.
+   *
+   * `GET /v1/status` `state: 'DOC'` dediğinde cihazın kendi listesinden
+   * okunuyor. Kayıt tutamadığımız bir belge (açılıp kimliği bize ulaşmamış)
+   * ancak böyle kapatılabiliyor.
+   */
+  openDocumentId?: string;
   /** Ajanda kapatılmayı bekleyen satış varsa kimliği. */
   pendingSale?: string;
   error?: string;

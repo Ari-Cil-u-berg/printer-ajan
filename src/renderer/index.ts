@@ -42,6 +42,7 @@ interface OkcHealth {
   ok?: boolean;
   state?: string;
   hasOpenDocument?: boolean;
+  openDocumentId?: string;
   pendingSale?: string;
   error?: string;
   checkedAt?: string;
@@ -357,11 +358,23 @@ function renderOkc(s: StatusSnapshot): void {
   $('bridgePairRow').classList.toggle('hidden', Boolean(s.bridge))
   $('bridgeUnpairRow').classList.toggle('hidden', !s.bridge)
 
+  // İKİ AYRI DURUM, tek kart:
+  //   - `pendingSale`: gövdesini BİZ biliyoruz, tekrar denenebilir.
+  //   - `openDocumentId`: cihazda açık ama bizde kaydı yok. Tekrar denenemez
+  //     (ne göndereceğimizi bilmiyoruz), yalnızca iptal edilebilir.
+  // İkincisini göstermemek, cihazın "uygun durumda değil" demesine sebep olan
+  // belgeyi kasiyerden gizlemek olurdu — kurtarmanın tek yolu cihazın başına
+  // gitmek olurdu.
   const pending = Boolean(h.pendingSale);
-  $('okcPendingCard').classList.toggle('hidden', !pending);
+  const orphan = !pending && Boolean(h.openDocumentId);
+  $('okcPendingCard').classList.toggle('hidden', !pending && !orphan);
+  $('okcRetryBtn').classList.toggle('hidden', !pending);
   if (pending) {
     $('okcPendingText').textContent =
       'Bu ajanda kapatılamamış bir mali belge var. Ödeme alınmış olabilir — önce "Tekrar dene" deneyin, fiş kesilmediyse iptal edin. Yeni satış başlatmayın.';
+  } else if (orphan) {
+    $('okcPendingText').textContent =
+      'Cihazda açık bir fiş duruyor ve bu yüzden yeni satış kabul etmiyor ("uygun durumda değil"). Bu fişi ajan başlatmadı, içeriğini bilmiyoruz — kapatmak için iptal edin.';
   }
 }
 

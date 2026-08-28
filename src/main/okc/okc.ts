@@ -138,7 +138,11 @@ export class OkcManager extends EventEmitter {
       this.rememberFingerprint(response.fingerprint);
       await this.learnSerialNo();
 
-      const body = response.data as { state?: string; activeDocument?: unknown };
+      const body = response.data as {
+        state?: string;
+        activeDocument?: { documentId?: string };
+        lastDocuments?: { documentId?: string; documentStatus?: string }[];
+      };
       /*
        * CİHAZIN KENDİ SEBEBİ, kırmızı bir ışık değil.
        *
@@ -151,6 +155,7 @@ export class OkcManager extends EventEmitter {
        */
       // Hata ZARFTA durur, yükte değil — `data` başarılı bir cevabın içeriği.
       const failure = response.httpStatus === 200 ? undefined : errorText(response.body);
+      const openDocumentId = body.state === 'DOC' ? openDocument(body) : undefined;
       this.health = {
         configured: true,
         ok: response.httpStatus === 200,
@@ -160,6 +165,13 @@ export class OkcManager extends EventEmitter {
         // varken yeni satış başlatılamaz ve sebebini bilmeden bakmak, cihazı
         // bozuk sanmaya yol açar.
         hasOpenDocument: body.state === 'DOC',
+        // AJAN KAYDI OLMAYAN AÇIK BELGE de kurtarılabilmeli. Belge açılıp
+        // `documentId` bize hiç ulaşamadıysa (ki cevabı yanlış yerden okurken
+        // tam bu oluyordu) diskte bir kayıt yok, ama cihaz onu biliyor ve
+        // kapanana kadar başka satış kabul etmiyor — "uygun durumda değil".
+        // Numarayı cihazdan alıp iptali kasiyere açıyoruz; alternatif, cihazın
+        // başına gidip menüden temizlemek.
+        ...(openDocumentId ? { openDocumentId } : {}),
         checkedAt: new Date().toISOString(),
         pendingSale: this.readPending()?.saleId,
       };
@@ -315,10 +327,15 @@ export class OkcManager extends EventEmitter {
    * ödemesi alınmış bir belgeyi de iptal etme ihtimali olurdu.
    */
   async cancelPending(): Promise<{ ok: boolean; error?: string }> {
-    const pending = this.readPending();
-    if (!pending || !this.client) return { ok: false, error: 'Bekleyen belge yok' };
+    if (!this.client) return { ok: false, error: 'Yazarkasa tanımlanmadı' };
+    // Önce KENDİ kaydımız: gövdesini bildiğimiz belge, tekrar denenebilir olan
+    // da odur. Kaydımız yoksa cihazın bildirdiği açık belgeye düşüyoruz —
+    // sahipsiz kalmış bir belgeyi kapatmak, cihazı yeniden satışa açmanın tek
+    // yolu ve bunu kasiyerin yapabilmesi gerekiyor.
+    const documentId = this.readPending()?.documentId ?? this.health.openDocumentId;
+    if (!documentId) return { ok: false, error: 'Bekleyen belge yok' };
     try {
-      await this.client.cancelDocument(pending.documentId);
+      await this.client.cancelDocument(documentId);
       this.clearPending();
       void this.refreshHealth();
       return { ok: true };
@@ -420,4 +437,25 @@ function errorText(body: {
   error?: { title?: string; description?: string };
 }): string | undefined {
   return body.error?.description?.trim() || body.error?.title?.trim() || undefined;
+}
+
+/**
+ * Cihazda açık duran belgenin kimliği.
+ *
+ * İKİ YERE DE BAKIYOR ve bu bilinçli: dokümanın metni `activeDocument` diyor,
+ * şema `lastDocuments` tanımlıyor. Hangisinin geldiğini varsaymak, bu dosyada
+ * bir kez pahalıya patlayan tam olarak o hata — metne güvenip şemayı okumamak.
+ */
+function openDocument(body: {
+  activeDocument?: { documentId?: string };
+  lastDocuments?: { documentId?: string; documentStatus?: string }[];
+}): string | undefined {
+  const active = body.activeDocument?.documentId?.trim();
+  if (active) return active;
+
+  // Kapanmış bir belgeyi iptal etmeye kalkmak, cihazın reddedeceği bir istek.
+  const open = body.lastDocuments?.find(
+    (doc) => doc.documentId && doc.documentStatus && !/CLOSED|CANCEL/i.test(doc.documentStatus),
+  );
+  return open?.documentId?.trim() || undefined;
 }
