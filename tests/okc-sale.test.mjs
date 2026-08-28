@@ -174,3 +174,67 @@ test('belge açılamadıysa iptal denenmez', { skip: !tls }, async () => {
     },
   );
 });
+
+/**
+ * KASADAN İPTAL — cihaz beklemeden dönmeli.
+ *
+ * Sahada: kasiyer POS'tan iptal etti, ekran "İPTAL EDİLDİ" dedi, cihaz kart
+ * beklemeye iki dakika daha devam etti. İki ekran iki farklı gerçek gösterdi.
+ * İptal artık cihazda belgeyi kapatıyor ve bekleyen isteği düşürüyor.
+ */
+test('kasadan iptal belgeyi kapatır ve satışı hemen bitirir', { skip: !tls }, async () => {
+  await withDevice(
+    (req, res, calls) => {
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-9' } });
+      }
+      if (req.url.endsWith('/cancel')) {
+        return json(res, 200, { status: 'SUCCESS', data: { documentStatus: 'CANCELLED' } });
+      }
+      // `Belge Sonlandır` kartı bekliyor — cevabı hiç vermiyoruz.
+      void calls;
+    },
+    async (okc, calls, dataDir) => {
+      const sale = okc.sell({ saleId: 's9', document });
+      // Belgenin açılıp bekleme durumuna geçmesini bekle.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const cancelled = await okc.cancelSale('s9');
+      assert.equal(cancelled.ok, true);
+
+      const result = await sale;
+      // RET, "bilmiyorum" DEĞİL: belgeyi biz kapattık, ödeme başlamadı.
+      assert.equal(result.status, 'DECLINED');
+      assert.equal(result.error, 'Kasadan iptal edildi');
+      assert.ok(calls.includes('POST /v1/documents/doc-9/cancel'));
+      assert.equal(fs.existsSync(pendingFile(dataDir)), false);
+    },
+  );
+});
+
+/** Başka bir adisyonun belgesi iptal edilmemeli. */
+test('adı geçmeyen satış için iptal reddedilir', { skip: !tls }, async () => {
+  await withDevice(
+    (req, res) => {
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-10' } });
+      }
+      if (req.url.endsWith('/cancel')) {
+        return json(res, 200, { status: 'SUCCESS', data: {} });
+      }
+      return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0009' } });
+    },
+    async (okc, calls) => {
+      const sale = okc.sell({ saleId: 's10', document });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const wrong = await okc.cancelSale('baska-adisyon');
+      assert.equal(wrong.ok, false);
+      assert.match(wrong.error, /beklemiyor/);
+      assert.ok(!calls.some((c) => c.includes('/cancel')), 'yanlış belge kapatılmamalı');
+
+      const result = await sale;
+      assert.equal(result.status, 'APPROVED');
+    },
+  );
+});

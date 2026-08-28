@@ -38,6 +38,14 @@ export class OkcManager extends EventEmitter {
   private readonly pendingPath: string;
   /** Aynı anda tek satış: cihaz da tek belge açabiliyor. */
   private busy = false;
+  /**
+   * Şu an cihazda bekleyen satış.
+   *
+   * `busy` bayrağı "meşgul müyüz" sorusunu cevaplıyordu; iptal ise HANGİ
+   * satışın beklediğini bilmek zorunda. Kimlik kontrolü olmadan gelen bir
+   * iptal, sırada bekleyen başka bir adisyonun belgesini kapatabilirdi.
+   */
+  private active: { saleId: string; documentId: string; abort: AbortController } | null = null;
 
   constructor(
     dataDir: string,
@@ -257,8 +265,10 @@ export class OkcManager extends EventEmitter {
     });
 
     // 2) Sonlandır — kalemler ve ödemelerle birlikte (combo).
+    const abort = new AbortController();
+    this.active = { saleId: request.saleId, documentId, abort };
     try {
-      const result = await this.finalize(client, documentId, request.document);
+      const result = await this.finalize(client, documentId, request.document, abort.signal);
 
       /*
        * REDDEDİLEN BELGE CİHAZDA KAPATILIR — ve bu, ret ile "bilmiyorum"
@@ -303,6 +313,23 @@ export class OkcManager extends EventEmitter {
     } catch (err) {
       // Cevap kayboldu. Belge cihazda kapanmış OLABİLİR ve kart çekilmiş
       // olabilir. `pending` kaydı diskte kalıyor; kurtarma kasiyerin işi.
+      /*
+       * BİZİM KOPARDIĞIMIZ BAĞLANTI BELİRSİZLİK DEĞİL.
+       *
+       * `cancelSale` önce cihazda belgeyi kapatıyor, ancak ondan SONRA bu
+       * isteği düşürüyor. Yani buraya `ERR_ABORTED` ile geldiysek belge
+       * kapanmış ve ödeme başlamamış demektir — bunu `UNKNOWN` yazmak,
+       * kasiyeri olmayan bir tahsilatı araştırmaya göndermek olurdu.
+       */
+      if (err instanceof PcLinkError && err.code === 'ERR_ABORTED') {
+        this.clearPending();
+        return {
+          saleId: request.saleId,
+          status: 'DECLINED',
+          documentId,
+          error: 'Kasadan iptal edildi',
+        };
+      }
       log.warn('okc finalize unknown', { saleId: request.saleId, documentId });
       return {
         saleId: request.saleId,
@@ -310,7 +337,53 @@ export class OkcManager extends EventEmitter {
         documentId,
         error: err instanceof Error ? err.message : 'Yazarkasa cevabı alınamadı',
       };
+    } finally {
+      this.active = null;
     }
+  }
+
+  /**
+   * Kasadan gelen iptal — cihazı BEKLETMEDEN durdurur.
+   *
+   * SIRA ÖNEMLİ: önce cihazda `Belge İptal`, sonra bekleyen `Belge Sonlandır`
+   * isteğini düşürmek. Tersi yapılsaydı belgeyi kapatacak bağlantıyı kendi
+   * elimizle koparmış, cihazı açık belgeyle kilitli bırakmış olurduk.
+   *
+   * KİMLİK KONTROLLÜ: yalnızca adı geçen satış iptal edilir. Kontrolsüz bir
+   * iptal, arada başlamış BAŞKA bir adisyonun belgesini kapatabilirdi.
+   *
+   * CİHAZ HAKEM: PC Link yalnızca hâlâ aktif bir belgeyi iptal ediyor.
+   * Ödeme o sırada tamamlandıysa iptal reddediliyor ve bekleyen istek kendi
+   * gerçek sonucuyla dönüyor — yani "iptal ettim ama para çekilmişti" durumu
+   * bizim değil cihazın kararı.
+   */
+  async cancelSale(saleId: string): Promise<{ ok: boolean; error?: string }> {
+    const client = this.client;
+    if (!client) return { ok: false, error: 'Yazarkasa tanımlanmadı' };
+
+    const active = this.active;
+    const documentId =
+      active?.saleId === saleId
+        ? active.documentId
+        : this.readPending()?.saleId === saleId
+          ? this.readPending()?.documentId
+          : undefined;
+    if (!documentId) return { ok: false, error: 'Bu satış cihazda beklemiyor' };
+
+    try {
+      const response = await client.cancelDocument(documentId);
+      if (response.httpStatus !== 200) {
+        return { ok: false, error: errorText(response.body) ?? 'Cihaz iptali kabul etmedi' };
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'İptal edilemedi' };
+    }
+
+    log.info('okc satış kasadan iptal edildi', { saleId, documentId });
+    if (active?.saleId === saleId) active.abort.abort();
+    else this.clearPending();
+    void this.refreshHealth();
+    return { ok: true };
   }
 
   /**
@@ -349,9 +422,10 @@ export class OkcManager extends EventEmitter {
     client: PcLinkClient,
     documentId: string,
     document: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<Omit<OkcSaleResult, 'saleId'>> {
     for (let attempt = 0; attempt <= FINALIZE_RETRIES; attempt += 1) {
-      const response = await client.finalizeDocument(documentId, document);
+      const response = await client.finalizeDocument(documentId, document, signal);
       this.rememberFingerprint(response.fingerprint);
 
       const receiptNo = response.data.receiptNo;
@@ -467,6 +541,9 @@ export class OkcManager extends EventEmitter {
   }
 
   private rememberFingerprint(fingerprint: string): void {
+    // Boş = oturum devam ettiği için sertifika sunulmadı. Öğrenilecek bir şey
+    // yok ve boş bir değeri sabitlemek, sonraki her bağlantıyı reddettirirdi.
+    if (!fingerprint) return;
     if (!this.config || this.config.fingerprint === fingerprint) return;
     if (this.config.fingerprint) return;
     this.config = { ...this.config, fingerprint };

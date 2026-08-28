@@ -212,8 +212,15 @@ export class PcLinkClient {
   finalizeDocument(
     documentId: string,
     document: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<PcLinkResponse<{ receiptNo?: string; totals?: Record<string, string> }>> {
-    return this.request('PUT', `/v1/documents/${encodeURIComponent(documentId)}`, document);
+    return this.request(
+      'PUT',
+      `/v1/documents/${encodeURIComponent(documentId)}`,
+      document,
+      DEFAULT_TIMEOUT_MS,
+      signal,
+    );
   }
 
   /** `POST /v1/documents/{id}/cancel` — açık belgeyi iptal eder. */
@@ -256,20 +263,36 @@ export class PcLinkClient {
     return this.request('GET', '/v1/settings', undefined, STATUS_TIMEOUT_MS);
   }
 
+  /**
+   * `signal` — bekleyen isteği YARIDA KESMEK için.
+   *
+   * `Belge Sonlandır` cihazda kart okutulmasını bekliyor ve bütçesi iki
+   * dakika. Kasiyer POS'tan iptal ettiğinde o iki dakikayı beklemek, ekranda
+   * hiçbir şey olmadan durmak demekti — sahada "2-3 dakika bekledik" diye
+   * geri geldi. İptal önce cihazda belgeyi kapatıyor, sonra bu sinyalle
+   * bekleyen isteği düşürüyor; sıra tersine olsaydı belgeyi kapatacak
+   * bağlantıyı kendi elimizle koparmış olurduk.
+   */
   private request<T>(
     method: 'GET' | 'POST' | 'PUT',
     path: string,
     body?: unknown,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    signal?: AbortSignal,
   ): Promise<PcLinkResponse<T>> {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), 'utf8');
 
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new PcLinkError('İstek iptal edildi', 'ERR_ABORTED', undefined));
+        return;
+      }
       // Parmak izi EL SIKIŞMA ANINDA okunuyor, cevap bittiğinde değil: yanıt
       // gövdesi tükendiğinde soket havuza iade edilmiş ya da kapanmış olabiliyor
       // ve o noktada sertifika artık okunamıyor.
       let peerFingerprint = '';
       let peerError: Error | null = null;
+      let aborted = false;
 
       const req = https.request(
         {
@@ -336,18 +359,46 @@ export class PcLinkClient {
         const tlsSocket = socket as TLSSocket;
         const capture = (): void => {
           try {
+            /*
+             * YENİDEN KULLANILAN OTURUMDA SERTİFİKA TEKRAR SUNULMAZ.
+             *
+             * TLS oturum devamlılığında (`isSessionReused`) sunucu sertifika
+             * zincirini yeniden göndermiyor ve `getPeerCertificate()` boş
+             * dönüyor. Kimlik kaybolmuyor: devam eden oturum, kriptografik
+             * olarak ilk el sıkışmadaki AYNI karşı tarafa bağlı — sabitlemeyi
+             * o el sıkışmada zaten yaptık.
+             *
+             * Bunu ayırt etmemek, ikinci eşzamanlı isteğin "sertifika
+             * okunamadı" ile düşmesi demekti. Sahada tek tek istek yaparken
+             * hiç görülmedi; kasadan gelen iptal, bekleyen `Belge Sonlandır`
+             * ile aynı anda ikinci bir bağlantı açtığı gün ortaya çıktı.
+             */
+            if (tlsSocket.isSessionReused?.()) {
+              peerFingerprint = this.target.fingerprint ?? '';
+              return;
+            }
             peerFingerprint = this.verifyPeer(tlsSocket);
           } catch (err) {
             peerError = err instanceof Error ? err : new Error(String(err));
             req.destroy();
           }
         };
-        // Soket havuzdan geldiyse el sıkışma çoktan bitmiştir.
-        if (tlsSocket.authorized !== undefined && typeof tlsSocket.getPeerCertificate === 'function' && !tlsSocket.connecting) {
-          capture();
-        } else {
-          tlsSocket.once('secureConnect', capture);
-        }
+        /*
+         * HAZIR OLMANIN ÖLÇÜSÜ SERTİFİKANIN KENDİSİ, bayraklar değil.
+         *
+         * Önceki kontrol `!connecting && authorized !== undefined` diyordu ve
+         * bu yanıltıcı: TCP bağlantısı kurulmuş ama TLS el sıkışması bitmemiş
+         * bir sokette de doğru çıkabiliyor. Tek istek yapılırken hiç
+         * görülmedi; iptal, bekleyen `Belge Sonlandır` ile AYNI ANDA ikinci
+         * bir istek açtığı gün ortaya çıktı ve iptal "sertifika okunamadı" ile
+         * düştü — yani kasiyerin iptali, sebebi görünmeyen bir yarışa takıldı.
+         *
+         * Sertifikayı okuyabiliyorsak el sıkışma bitmiştir; okuyamıyorsak
+         * beklenecek olay zaten `secureConnect`.
+         */
+        const cert = tlsSocket.getPeerCertificate?.();
+        if (cert && 'fingerprint256' in cert && cert.fingerprint256) capture();
+        else tlsSocket.once('secureConnect', capture);
       });
 
       req.on('timeout', () => {
@@ -357,9 +408,25 @@ export class PcLinkClient {
         reject(new PcLinkError('Yazarkasa yanıt vermedi', undefined, undefined));
       });
       req.on('error', (err) => {
+        // İPTAL BİR AĞ HATASI DEĞİL. Soketi biz kopardık ve sebebini
+        // biliyoruz; `ECONNRESET` diye raporlamak, kasiyerin kendi bastığı
+        // düğmeyi bir arıza gibi görmesi olurdu.
+        if (aborted) {
+          reject(new PcLinkError('İstek iptal edildi', 'ERR_ABORTED', undefined));
+          return;
+        }
         // Sertifika reddi bir ağ hatası değil: sebebini kaybetmeden yükseltilir.
         reject(peerError ?? new PcLinkError(networkMessage(err), undefined, undefined));
       });
+
+      if (signal) {
+        const onAbort = (): void => {
+          aborted = true;
+          req.destroy();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        req.once('close', () => signal.removeEventListener('abort', onAbort));
+      }
 
       if (payload) req.write(payload);
       req.end();

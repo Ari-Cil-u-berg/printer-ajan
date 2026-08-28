@@ -214,6 +214,9 @@ export class Agent extends EventEmitter {
       lookup: (saleId) =>
         this.lastSale && this.lastSale.saleId === saleId ? this.lastSale : null,
       reachable: () => this.okc.getHealth().ok === true,
+      // Kimlik kontrolü `OkcManager` tarafında: yalnızca adı geçen satış
+      // iptal edilir, arada başlamış başka bir adisyonunki değil.
+      cancelSale: (saleId) => this.okc.cancelSale(saleId),
     });
 
     link.on('changed', () => this.emitStatus());

@@ -67,6 +67,8 @@ export interface BridgeLinkOptions {
   lookup: (saleId: string) => OkcSaleResult | null;
   /** Cihaz şu an ulaşılabilir mi — heartbeat'e yazılır. */
   reachable: () => boolean;
+  /** Kasadan gelen iptali cihaza taşır. Yalnızca adı geçen satış için. */
+  cancelSale: (saleId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export class BridgeLink extends EventEmitter {
@@ -154,25 +156,39 @@ export class BridgeLink extends EventEmitter {
     socket.on(ServerEvents.SALE, (payload: SalePayload) => void this.onSale(payload));
     socket.on(ServerEvents.QUERY_LAST, (payload: QueryPayload) => this.onQuery(payload));
     socket.on(ServerEvents.CANCEL, (payload: { intentId: string }) => {
-      /*
-       * İptal, cihaza henüz gitmemiş bir emir içindir. Cihazda açık bir belge
-       * varsa onu ajan BURADAN iptal etmez: ödemesi alınmış olabilir ve o
-       * kararı kasiyer, ne olduğunu görerek verir.
-       *
-       * Bunun bir bedeli var ve sahada yaşandı: kasiyer POS'tan "iptal et"
-       * dedi, cihazda hiçbir şey olmadı, sonraki satış "uygun durumda değil"
-       * ile düştü. Asıl kusur burada değildi — reddedilen bir satış belgeyi
-       * cihazda açık bırakıyordu (bkz. `runSale`); o düzeldi. Kalan durumlar
-       * gerçekten kasiyerin kararını gerektiriyor ve Yazarkasa panelindeki
-       * kutu onları gösteriyor.
-       *
-       * Log satırı bu yüzden "yok sayıldı" diyor: bir gün aynı şikâyet
-       * geldiğinde, ajanın emri ALDIĞI ama bilerek uygulamadığı görülsün.
-       */
-      log.info('bridge iptal isteği — cihazdaki belgeye dokunulmadı', {
-        intentId: payload.intentId,
-      });
+      void this.onCancel(payload.intentId);
     });
+  }
+
+  /**
+   * Kasadan gelen iptal — cihazı BEKLETMEDEN durdurur.
+   *
+   * Eskiden burası yalnızca logluyordu ve gerekçesi şuydu: cihazda açık bir
+   * belgenin ödemesi alınmış olabilir, kararı kasiyer versin. Bedeli sahada
+   * görüldü — kasiyer POS'tan iptal ediyor, ekran "İPTAL EDİLDİ" diyor, cihaz
+   * ise kart bekleyerek iki dakika daha duruyor. İki ekran iki farklı gerçek
+   * gösteriyor ve doğru olan cihazınki.
+   *
+   * KARARI YİNE CİHAZ VERİYOR: PC Link yalnızca hâlâ AKTİF bir belgeyi iptal
+   * ediyor. Ödeme o arada tamamlandıysa iptal reddediliyor ve bekleyen satış
+   * kendi gerçek sonucuyla dönüyor. Yani "alınmış ödemeyi silme" güvencesi
+   * kayboluyor değil, hakemliği bize değil cihaza bırakılıyor.
+   *
+   * SONUÇ GERİ BİLDİRİLMİYOR: backend iptali kendi tarafında zaten
+   * `CANCELLED`'a aldı ve `terminal.result` yalnızca APPROVED/DECLINED
+   * taşıyor. Buradan bir ret göndermek, kapanmış bir kaydı ikinci kez
+   * kapatmaya çalışmak olurdu.
+   */
+  private async onCancel(intentId: string): Promise<void> {
+    const result = await this.opts.cancelSale(intentId);
+    if (result.ok) {
+      log.info('bridge iptali cihaza uygulandı', { intentId });
+      return;
+    }
+    // Uygulanamaması beklenen bir durum: emir cihaza hiç ulaşmamış olabilir,
+    // ya da ödeme tamamlanmış olabilir. İkisi de kasiyerin göreceği ekranda
+    // zaten anlaşılıyor; burada sessiz kalmak, sebebini kaybetmek olurdu.
+    log.warn('bridge iptali cihaza uygulanamadı', { intentId, error: result.error });
   }
 
   /**
