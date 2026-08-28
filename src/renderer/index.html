@@ -173,7 +173,18 @@
                 <dd><input id="okcPort" type="number" value="4443" /></dd>
                 <dt>Ad</dt>
                 <dd><input id="okcLabel" type="text" placeholder="Kasa yazarkasası" autocomplete="off" /></dd>
+                <dt>Yazılım kimliği</dt>
+                <dd><input id="okcSoftwareId" type="text" placeholder="yetkili servisten alın" autocomplete="off" /></dd>
+                <dt>Kasa kimliği</dt>
+                <dd><input id="okcHardwareId" type="text" placeholder="boş bırakılabilir" autocomplete="off" /></dd>
               </dl>
+              <p class="help">
+                <b>Yazılım kimliği</b> (<code>X-SoftwareId</code>) cihazın tanıdığı bir değerdir ve
+                Hugin tarafından verilir — uydurulamaz, boş bırakılırsa cihaz istekleri reddeder.
+                <b>Kasa kimliği</b> (<code>X-HardwareId</code>) bu bilgisayarı tanıtır; boş
+                bırakırsanız makinenin adı kullanılır. Cihaz 8–20 karakter istiyor, kısa yazarsanız
+                otomatik uzatılır.
+              </p>
               <div class="row">
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>
                 <button id="okcTestBtn" class="ghost">Bağlantıyı sına</button>

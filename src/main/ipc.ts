@@ -83,11 +83,21 @@ function assertOkc(value: unknown): OkcConfig {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Geçersiz port');
 
   const label = typeof c.label === 'string' ? c.label.trim().slice(0, 60) : '';
+  const text = (value: unknown): string =>
+    typeof value === 'string' ? value.trim().slice(0, 64) : '';
+  const softwareId = text(c.softwareId);
+  const hardwareId = text(c.hardwareId);
 
   return {
     host,
     port,
     ...(label ? { label } : {}),
+    // Kimlik başlıkları: cihaz bunları ZORUNLU tutuyor ve `X-SoftwareId`'yi
+    // uydurulmuş bir değer olarak kabul etmiyor — Hugin tarafından verilen bir
+    // kimlik bekliyor. Uzunluk düzeltmesi istemcide (`normalizeId`); burada
+    // yalnızca kırpıp saklıyoruz, çünkü kuralı bilen taraf orası.
+    ...(softwareId ? { softwareId } : {}),
+    ...(hardwareId ? { hardwareId } : {}),
     // Parmak izi KULLANICIDAN GELMEZ: cihazdan öğrenilir. Dışarıdan kabul
     // etmek, sabitlemenin anlamını ortadan kaldırırdı.
     ...(c.fingerprint && typeof c.fingerprint === 'string' ? { fingerprint: c.fingerprint } : {}),
@@ -137,8 +147,13 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
       // kullanıcı ayar ekranını her açtığında sabitlemeyi sıfırlamak, korumayı
       // hiç yapmamakla aynı şey olurdu.
       const current = agent.okc.getConfig();
-      if (next && current && current.host === next.host && current.fingerprint) {
-        next.fingerprint = current.fingerprint;
+      if (next && current && current.host === next.host) {
+        if (current.fingerprint) next.fingerprint = current.fingerprint;
+        // SİCİL DE KORUNUR, aynı gerekçeyle: cihazdan öğrenilen bir değer ve
+        // formda karşılığı yok. Korunmasaydı her kaydetme onu siler, bir
+        // sonraki sağlık kontrolüne kadar istekler `X-SerialNo` başlıksız
+        // giderdi — kendi kendine düzelen ama sebebi görünmeyen bir kesinti.
+        if (current.serialNo && !next.serialNo) next.serialNo = current.serialNo;
       }
       agent.setOkc(next);
       await agent.okc.refreshHealth();

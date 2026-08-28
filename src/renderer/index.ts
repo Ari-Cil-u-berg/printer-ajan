@@ -20,7 +20,23 @@ interface PrinterConfig {
   cut: boolean;
 }
 
-interface OkcConfig { host: string; port: number; fingerprint?: string; label?: string }
+/**
+ * `shared/types.ts`'in kopyası — renderer izole derleniyor ve ana süreç
+ * tiplerini içe aktarmıyor. Alan eklerken İKİ TARAFI da güncelleyin; burada
+ * eksik kalan bir alan, formda doldurulup sessizce kaybolur.
+ */
+interface OkcConfig {
+  host: string;
+  port: number;
+  fingerprint?: string;
+  label?: string;
+  /** `X-SoftwareId` — Hugin'in verdiği kimlik. Uydurulamaz. */
+  softwareId?: string;
+  /** `X-HardwareId` — bu bilgisayarı tanıtır. Boşsa makine adı kullanılır. */
+  hardwareId?: string;
+  /** Cihazdan öğrenilir, formda karşılığı yok. */
+  serialNo?: string;
+}
 interface OkcHealth {
   configured: boolean;
   ok?: boolean;
@@ -293,12 +309,16 @@ function renderOkc(s: StatusSnapshot): void {
   const hostInput = $<HTMLInputElement>('okcHost');
   const portInput = $<HTMLInputElement>('okcPort');
   const labelInput = $<HTMLInputElement>('okcLabel');
+  const softwareInput = $<HTMLInputElement>('okcSoftwareId');
+  const hardwareInput = $<HTMLInputElement>('okcHardwareId');
 
   // Yazarken üstüne yazma — kullanıcı IP girerken durum yenilenirse alan
   // sıfırlanmamalı.
   if (document.activeElement !== hostInput) hostInput.value = s.okc?.host ?? '';
   if (document.activeElement !== portInput) portInput.value = String(s.okc?.port ?? 4443);
   if (document.activeElement !== labelInput) labelInput.value = s.okc?.label ?? '';
+  if (document.activeElement !== softwareInput) softwareInput.value = s.okc?.softwareId ?? '';
+  if (document.activeElement !== hardwareInput) hardwareInput.value = s.okc?.hardwareId ?? '';
 
   const h = s.okcHealth;
   const stateEl = $('okcState');
@@ -351,6 +371,8 @@ $('okcSaveBtn').addEventListener('click', async () => {
     host: $<HTMLInputElement>('okcHost').value.trim(),
     port: Number($<HTMLInputElement>('okcPort').value) || 4443,
     label: $<HTMLInputElement>('okcLabel').value.trim(),
+    softwareId: $<HTMLInputElement>('okcSoftwareId').value.trim(),
+    hardwareId: $<HTMLInputElement>('okcHardwareId').value.trim(),
   });
   btn.disabled = false;
 
