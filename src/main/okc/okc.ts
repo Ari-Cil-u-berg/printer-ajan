@@ -259,7 +259,46 @@ export class OkcManager extends EventEmitter {
     // 2) Sonlandır — kalemler ve ödemelerle birlikte (combo).
     try {
       const result = await this.finalize(client, documentId, request.document);
-      this.clearPending();
+
+      /*
+       * REDDEDİLEN BELGE CİHAZDA KAPATILIR — ve bu, ret ile "bilmiyorum"
+       * arasındaki farkın tek pratik sonucu.
+       *
+       * Cihaz sonlandırmayı reddettiğinde (banka terminali bulunamadı, kalem
+       * hatalı, KDV tanımsız) ORTADA ÇEKİLMİŞ PARA YOK: ret, ödemenin hiç
+       * başlamadığını söylüyor. Ama belge açık kalıyor ve yazarkasa aynı anda
+       * tek belge tuttuğu için bir sonraki satışı "uygun durumda değil" ile
+       * reddediyor. Kasiyer bunu kendi yaptığı bir şeye bağlayamıyor: ekranda
+       * gördüğü hata bir önceki satışa aitti.
+       *
+       * Kayıt, iptal BAŞARILI olana kadar silinmiyor. Silip de belgeyi açık
+       * bırakmak, kurtarma kolunu elimizden atıp cihazı kilitli bırakmaktı —
+       * tam olarak sahada yaşanan buydu.
+       *
+       * `UNKNOWN` ve `206` BURAYA GİRMEZ: orada para çekilmiş olabilir ve
+       * belgeyi iptal etmek, alınmış bir ödemenin mali karşılığını silmek
+       * olurdu. O ikisinde karar kasiyerin.
+       */
+      if (result.status === 'DECLINED') {
+        const cancelled = await this.cancelQuietly(client, documentId);
+        if (cancelled) this.clearPending();
+        return { saleId: request.saleId, ...result };
+      }
+
+      /*
+       * KAYIT YALNIZCA ONAYDA SİLİNİR.
+       *
+       * `finalize` her zaman FIRLATMIYOR: `206`'da — ödeme alındı, belge
+       * kapanmadı — tekrarlar tükendiğinde `UNKNOWN` DÖNDÜRÜYOR. Koşulsuz
+       * `clearPending()`, tam da parası çekilmiş bir satışın kurtarma kolunu
+       * siliyordu. Kasiyer kağıdı takıp "Tekrar dene"ye bastığında elde
+       * denenecek bir şey kalmıyordu; belge cihazda açık, ödeme alınmış,
+       * bizde kayıt yok.
+       *
+       * Fırlatılan hata yolu (aşağıdaki `catch`) kaydı zaten koruyordu — kusur
+       * bu iki `UNKNOWN` üretme biçiminin farklı davranmasıydı.
+       */
+      if (result.status === 'APPROVED') this.clearPending();
       return { saleId: request.saleId, ...result };
     } catch (err) {
       // Cevap kayboldu. Belge cihazda kapanmış OLABİLİR ve kart çekilmiş
@@ -271,6 +310,30 @@ export class OkcManager extends EventEmitter {
         documentId,
         error: err instanceof Error ? err.message : 'Yazarkasa cevabı alınamadı',
       };
+    }
+  }
+
+  /**
+   * Belgeyi kapatmayı dener, başarısızlığı yutar.
+   *
+   * Çağıran zaten bir RET döndürüyor ve iptalin de başarısız olması o rettin
+   * sebebini değiştirmiyor. Kasiyere gösterilecek hata, satışın neden
+   * reddedildiğidir — "üstelik iptal de edilemedi" cümlesi onu gömerdi.
+   * Kapatılamamışsa `pending` kaydı yerinde kalıyor ve Yazarkasa paneli
+   * belgeyi göstermeye devam ediyor; kaybolan bir şey yok.
+   */
+  private async cancelQuietly(client: PcLinkClient, documentId: string): Promise<boolean> {
+    try {
+      const response = await client.cancelDocument(documentId);
+      const ok = response.httpStatus === 200;
+      if (!ok) log.warn('okc reddedilen belge iptal edilemedi', { documentId });
+      return ok;
+    } catch (err) {
+      log.warn('okc reddedilen belge iptal edilemedi', {
+        documentId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
     }
   }
 

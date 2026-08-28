@@ -154,10 +154,24 @@ export class BridgeLink extends EventEmitter {
     socket.on(ServerEvents.SALE, (payload: SalePayload) => void this.onSale(payload));
     socket.on(ServerEvents.QUERY_LAST, (payload: QueryPayload) => this.onQuery(payload));
     socket.on(ServerEvents.CANCEL, (payload: { intentId: string }) => {
-      // İptal, cihaza henüz gitmemiş bir emir içindir. Cihazda açık bir belge
-      // varsa onu ajan kendi başına iptal ETMEZ: ödemesi alınmış olabilir ve
-      // kararı kasiyer verir (bkz. Yazarkasa ekranındaki bekleyen fiş kutusu).
-      log.info('bridge iptal isteği', { intentId: payload.intentId });
+      /*
+       * İptal, cihaza henüz gitmemiş bir emir içindir. Cihazda açık bir belge
+       * varsa onu ajan BURADAN iptal etmez: ödemesi alınmış olabilir ve o
+       * kararı kasiyer, ne olduğunu görerek verir.
+       *
+       * Bunun bir bedeli var ve sahada yaşandı: kasiyer POS'tan "iptal et"
+       * dedi, cihazda hiçbir şey olmadı, sonraki satış "uygun durumda değil"
+       * ile düştü. Asıl kusur burada değildi — reddedilen bir satış belgeyi
+       * cihazda açık bırakıyordu (bkz. `runSale`); o düzeldi. Kalan durumlar
+       * gerçekten kasiyerin kararını gerektiriyor ve Yazarkasa panelindeki
+       * kutu onları gösteriyor.
+       *
+       * Log satırı bu yüzden "yok sayıldı" diyor: bir gün aynı şikâyet
+       * geldiğinde, ajanın emri ALDIĞI ama bilerek uygulamadığı görülsün.
+       */
+      log.info('bridge iptal isteği — cihazdaki belgeye dokunulmadı', {
+        intentId: payload.intentId,
+      });
     });
   }
 
