@@ -118,9 +118,10 @@ export class OkcManager extends EventEmitter {
 
   /** `GET /v1/status` — kasa ekranındaki yeşil/kırmızı göstergenin tek dayanağı. */
   async refreshHealth(): Promise<OkcHealth> {
+    const previous = this.health;
     if (!this.client || !this.config) {
       this.health = { configured: Boolean(this.config) };
-      this.emit('changed');
+      this.settleHealth(previous);
       return this.health;
     }
 
@@ -137,7 +138,7 @@ export class OkcManager extends EventEmitter {
         checkedAt: new Date().toISOString(),
         pendingSale: this.readPending()?.saleId,
       };
-      this.emit('changed');
+      this.settleHealth(previous);
       return this.health;
     }
 
@@ -193,8 +194,39 @@ export class OkcManager extends EventEmitter {
       };
     }
 
-    this.emit('changed');
+    this.settleHealth(previous);
     return this.health;
+  }
+
+  /**
+   * Sağlık değişimini LOGA DA yazar — yalnızca ekrana değil.
+   *
+   * Cihazın kendi cümlesi ("x-softwareid eşleşmiyor", "X-HardwareId değeri boş
+   * olamaz") tek bir yerde duruyordu: kasadaki Yazarkasa panelinde. Uzaktan
+   * bakan kişi için o cümle HİÇ VAR OLMADI — `journalctl` boş, backend zaten
+   * bu trafiği görmüyor (PC Link yerel ağda, backend devrede değil). Kurulum
+   * hatası "cihaza ulaşılamıyor" diye rapor edildi ve VKN'nin yanlış girildiği
+   * ancak kasanın başına gidilince anlaşıldı.
+   *
+   * YALNIZCA DEĞİŞİMDE yazılıyor. Kontrol altmış saniyede bir dönüyor; aynı
+   * cümleyi her turda basmak, günde binden fazla satırla logu okunmaz yapar ve
+   * asıl olayı gömerdi. Düzelme de yazılıyor: hatanın ne zaman bittiğini
+   * bilmeden, ne zaman başladığını bilmek yarım cevap.
+   */
+  private settleHealth(previous: OkcHealth): void {
+    const error = this.health.error;
+    if (error && error !== previous.error) {
+      log.warn('okc sağlık hatası', {
+        ...(this.config?.host ? { host: this.config.host } : {}),
+        error,
+        ...(this.health.state ? { state: this.health.state } : {}),
+      });
+    } else if (!error && previous.error) {
+      log.info('okc yeniden bağlandı', {
+        ...(this.config?.host ? { host: this.config.host } : {}),
+      });
+    }
+    this.emit('changed');
   }
 
   // --- satış --------------------------------------------------------------
