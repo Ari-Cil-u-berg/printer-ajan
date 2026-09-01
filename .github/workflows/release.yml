@@ -41,10 +41,18 @@ jobs:
       # CSC_LINK is intentionally absent: electron-builder signs only when it is
       # set, so this produces an unsigned NSIS installer plus the latest.yml that
       # electron-updater reads. Adding the secret later needs no change here.
+      # --yes is not optional here. release.sh asks the operator to type the
+      # version back before it publishes, and a runner has no stdin: `read`
+      # returns non-zero, `set -e` takes over and the job dies at the prompt
+      # with "Beklenmeyen hata". Every tag-triggered release failed this way and
+      # was then published by hand from a laptop — the pipeline looked broken
+      # for a reason nobody had to fix, so nobody did. The guards that matter in
+      # CI (version not already published, typecheck, tests) run before this
+      # point and --yes skips none of them.
       - name: Build and publish the NSIS installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release -- --win
+        run: npm run release -- --win --yes
 
       # A release whose latest.yml is missing is an app that never updates
       # again, and nothing else in the pipeline would notice.
@@ -89,7 +97,12 @@ jobs:
             || { echo "expected an ad-hoc signature — refusing to ship a half-signed build"; exit 1; }
           rm -f release/latest-mac.yml
 
+      # The tag comes from package.json, not GITHUB_REF_NAME. This workflow also
+      # answers workflow_dispatch — the documented way to finish a publish that
+      # failed halfway — and there the ref is a branch, so `gh release upload
+      # main` would look for a release that cannot exist. Every other step
+      # already derives the version from package.json; this one was the outlier.
       - name: Attach the DMG to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" release/*.dmg --clobber
+        run: gh release upload "v$(node -p "require('./package.json').version")" release/*.dmg --clobber
