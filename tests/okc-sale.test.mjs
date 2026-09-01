@@ -212,6 +212,77 @@ test('kasadan iptal belgeyi kapatır ve satışı hemen bitirir', { skip: !tls }
   );
 });
 
+/**
+ * KURTARMA DENEMESİ CİHAZI İLK SATIŞTAN KÖTÜ BIRAKMAZ.
+ *
+ * `retryPending` reddi alınca kaydı siliyor ama belgeyi cihazda açık
+ * bırakıyordu — `sell` yolunun tam tersi. Sonuç: sahipsiz açık belge, elde
+ * kayıt yok, sonraki satış "uygun durumda değil".
+ */
+test('tekrar denemede reddedilen belge cihazda kapatılır', { skip: !tls }, async () => {
+  // İlk satış `206` ile biter (ödeme alındı, fiş kapanmadı) ve kayıt bırakır;
+  // `sell` içindeki iki tekrarla birlikte üç `PUT` eder. Kasiyerin tekrar
+  // denemesi dördüncüsüdür ve cihaz onu reddeder.
+  let puts = 0;
+  await withDevice(
+    (req, res) => {
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-11' } });
+      }
+      if (req.url.endsWith('/cancel')) {
+        return json(res, 200, { status: 'SUCCESS', data: { documentStatus: 'CANCELLED' } });
+      }
+      puts += 1;
+      return puts > 3
+        ? json(res, 400, { status: 'ERROR', error: { description: 'Kalem hatalı' } })
+        : json(res, 206, { status: 'SUCCESS', data: {} });
+    },
+    async (okc, calls, dataDir) => {
+      const first = await okc.sell({ saleId: 's11', document });
+      assert.equal(first.status, 'UNKNOWN');
+      assert.equal(fs.existsSync(pendingFile(dataDir)), true);
+
+      const retried = await okc.retryPending();
+      assert.equal(retried.status, 'DECLINED');
+      assert.ok(calls.includes('POST /v1/documents/doc-11/cancel'), 'belge kapatılmalı');
+      assert.equal(fs.existsSync(pendingFile(dataDir)), false);
+    },
+  );
+});
+
+/**
+ * "İPTAL ETTİM" DEMEK, CİHAZIN ETTİĞİ ANLAMINA GELMEZ.
+ *
+ * `cancelPending` cevabın HTTP durumunu hiç okumuyordu: cihaz reddetse bile
+ * kasiyere `ok` dönüyor ve kayıt siliniyordu — kurtarma kolu, tam lazım olduğu
+ * anda atılıyordu.
+ */
+test('cihaz iptali reddederse bekleyen kayıt korunur', { skip: !tls }, async () => {
+  await withDevice(
+    (req, res) => {
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-12' } });
+      }
+      if (req.url.endsWith('/cancel')) {
+        return json(res, 409, {
+          status: 'ERROR',
+          error: { description: 'Belge iptal edilebilir durumda değil' },
+        });
+      }
+      return json(res, 206, { status: 'SUCCESS', data: {} });
+    },
+    async (okc, calls, dataDir) => {
+      const sale = await okc.sell({ saleId: 's12', document });
+      assert.equal(sale.status, 'UNKNOWN');
+
+      const cancelled = await okc.cancelPending();
+      assert.equal(cancelled.ok, false, 'cihazın reddi başarı sayılmamalı');
+      assert.match(cancelled.error, /iptal edilebilir durumda değil/);
+      assert.equal(fs.existsSync(pendingFile(dataDir)), true, 'kayıt korunmalı');
+    },
+  );
+});
+
 /** Başka bir adisyonun belgesi iptal edilmemeli. */
 test('adı geçmeyen satış için iptal reddedilir', { skip: !tls }, async () => {
   await withDevice(

@@ -504,8 +504,29 @@ export class OkcManager extends EventEmitter {
     const documentId = this.readPending()?.documentId ?? this.health.openDocumentId;
     if (!documentId) return { ok: false, error: 'Bekleyen belge yok' };
     try {
-      await this.client.cancelDocument(documentId);
+      /*
+       * CİHAZ KABUL ETMEDİYSE KAYIT SİLİNMEZ.
+       *
+       * `request()` her HTTP durumunu çözüyor — 4xx dahil — çünkü `206` gibi
+       * cevaplar arıza değil, taşınması gereken bilgi. Bedeli burada
+       * ödeniyordu: cevabı hiç okumadan `pending` siliniyor ve kasiyere "iptal
+       * edildi" deniyordu. Cihaz reddettiğinde belge açık kalıyor, kayıt ise
+       * gidiyordu — yani kurtarma kolunu, tam da lazım olduğu anda atmış
+       * oluyorduk. Sonraki satış "uygun durumda değil" ile ölüyor ve sebebi
+       * kasiyerin gördüğü hiçbir ekranda yazmıyor.
+       *
+       * `cancelSale` ve `cancelQuietly` bu kontrolü zaten yapıyordu; eksik olan
+       * üçüncü yoldu.
+       */
+      const response = await this.client.cancelDocument(documentId);
+      if (response.httpStatus !== 200) {
+        const error = errorText(response.body) ?? 'Cihaz iptali kabul etmedi';
+        log.warn('okc bekleyen belge iptal edilemedi', { documentId, error });
+        void this.refreshHealth();
+        return { ok: false, error };
+      }
       this.clearPending();
+      log.info('okc bekleyen belge iptal edildi', { documentId });
       void this.refreshHealth();
       return { ok: true };
     } catch (err) {
@@ -521,7 +542,27 @@ export class OkcManager extends EventEmitter {
     this.busy = true;
     try {
       const result = await this.finalize(this.client, pending.documentId, pending.document);
-      if (result.status !== 'UNKNOWN') this.clearPending();
+
+      /*
+       * RET, `runSale` İLE AYNI ŞEKİLDE KAPATILIR.
+       *
+       * Burada koşul yalnızca `!== 'UNKNOWN'` idi: reddedilen belge cihazda
+       * AÇIK bırakılıyor, kaydı ise siliniyordu. `runSale` aynı durumda
+       * `cancelQuietly` çağırıyor ve iptal başarısızsa kaydı koruyor — iki
+       * yolun farklı davranması, kurtarma denemesinin cihazı ilk satıştan daha
+       * kötü bir hâlde bırakması demekti: sahipsiz açık belge, elde kayıt yok,
+       * yeni satış "uygun durumda değil".
+       *
+       * `UNKNOWN` yine dokunulmadan bırakılıyor — orada ödeme alınmış olabilir
+       * ve belgeyi iptal etmek, alınmış bir ödemenin mali karşılığını silmek
+       * olurdu.
+       */
+      if (result.status === 'DECLINED') {
+        const cancelled = await this.cancelQuietly(this.client, pending.documentId);
+        if (cancelled) this.clearPending();
+      } else if (result.status === 'APPROVED') {
+        this.clearPending();
+      }
       return { saleId: pending.saleId, ...result };
     } catch (err) {
       return {
