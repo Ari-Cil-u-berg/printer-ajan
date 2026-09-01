@@ -265,7 +265,13 @@ export class Agent extends EventEmitter {
   /** Kasiyerin elle tetiklediği kurtarma — yarım kalan belgeyi tekrar dener. */
   async retryPendingSale(): Promise<OkcSaleResult | null> {
     const result = await this.okc.retryPending();
-    if (result) this.recordSale(result);
+    if (!result) return null;
+    this.recordSale(result);
+    // Sonuç BACKEND'E DE gider. `lookup` yalnızca sorulursa cevap veriyor ve
+    // süpürge o soruyu bir kez soruyor; kurtarma o andan sonra başarılı olursa
+    // kesilmiş bir fiş adisyona hiç işlenmezdi. `UNKNOWN` burada da
+    // gönderilmiyor — onu `BridgeLink` eliyor.
+    this.bridge?.reportResult(result);
     return result;
   }
 

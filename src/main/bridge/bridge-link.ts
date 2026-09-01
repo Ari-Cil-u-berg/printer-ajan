@@ -239,6 +239,24 @@ export class BridgeLink extends EventEmitter {
     });
   }
 
+  /**
+   * Satış emrinin DIŞINDA çıkan bir sonucu bildirir — kasiyerin "Tekrar dene"si.
+   *
+   * `emitResult` yalnızca `onSale` içinden çağrılıyordu: kurtarma başarılı olsa
+   * bile backend'e hiçbir şey gitmiyor, sonuç yalnızca `lookup` cevabı olarak
+   * SORULURSA duyuluyordu. Süpürge o soruyu bir kez soruyor — tahsilat
+   * TIMEOUT'a düştüğü an — ve o an kasiyer henüz kağıdı takmamışsa cevap
+   * dürüstçe `null` oluyor. Sonrasında fiş kesilse bile kimse tekrar sormuyor:
+   * mali fiş var, adisyon açık.
+   *
+   * Backend `TIMEOUT → APPROVED` geçişine izin veriyor (durum makinesindeki tek
+   * geri dönüş) ve aynı sonucun ikinci kez gelmesini sessizce yutuyor, yani bu
+   * bildirimi geç göndermek güvenli — göndermemek değildi.
+   */
+  reportResult(result: OkcSaleResult): void {
+    this.emitResult(result);
+  }
+
   private emitAck(intentId: string, accepted: boolean, reason?: string): void {
     this.socket?.emit(ClientEvents.ACK, {
       intentId,
