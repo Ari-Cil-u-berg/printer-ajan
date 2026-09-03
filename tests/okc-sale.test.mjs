@@ -309,3 +309,83 @@ test('adı geçmeyen satış için iptal reddedilir', { skip: !tls }, async () =
     },
   );
 });
+
+/**
+ * `X-SoftwareId` = VKN, ve doğruluk kaynağı SUNUCUDAKİ kayıt.
+ *
+ * Kurulum ekranına elle yazılan numara bir hane eksik olabilir. O durumda
+ * cihaz her çağrıyı reddeder ve arıza "yazarkasa çalışmıyor" kılığında
+ * görünür — sebebi görünmez. Sunucu numarayı emirle birlikte gönderdiği için
+ * ayrışmayı BİZ yakalayabiliyoruz.
+ */
+test('ayrışan VKN belge AÇILMADAN satışı durdurur', { skip: !tls }, async () => {
+  await withDevice(
+    (req, res) => json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-20' } }),
+    async (okc, calls) => {
+      // Ajan ayarı 6310077423; sunucunun bildiği numara başka.
+      const result = await okc.sell({ saleId: 's20', document, taxId: '9999999999' });
+
+      assert.equal(result.status, 'DECLINED');
+      assert.match(result.error, /uyuşmuyor/);
+      // Cihaza HİÇ gidilmemeli: açılan bir belge, kapatılması gereken bir belge.
+      assert.deepEqual(calls, []);
+    },
+  );
+});
+
+test('aynı VKN satışı engellemez — biçim farkı da bozmaz', { skip: !tls }, async () => {
+  await withDevice(
+    (req, res) => {
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-21' } });
+      }
+      return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0021' } });
+    },
+    async (okc) => {
+      const result = await okc.sell({ saleId: 's21', document, taxId: '631 007-7423' });
+      assert.equal(result.status, 'APPROVED');
+      // Dolu ayarın üstüne YAZILMAZ: öğrenme yalnızca boş kutu için.
+      assert.equal(okc.getConfig().softwareId, '6310077423');
+    },
+  );
+});
+
+/**
+ * Ayar boşken sunucunun numarası ÖĞRENİLİR ve kalıcı yazılır.
+ *
+ * `serialNo` ile aynı desen: sunucudan/cihazdan öğrenilen bir gerçek bir kez
+ * yazılır, kurulum ekranında görünür ve sonraki isteklerde başlıkta gider.
+ */
+test('boş VKN ayarı sunucudan öğrenilir ve saklanır', { skip: !tls }, async () => {
+  const saved = [];
+  const server = https.createServer({ key: tls.key, cert: tls.cert }, (req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/documents') {
+      return json(res, 200, {
+        status: 'SUCCESS',
+        data: { documentId: 'doc-22', softwareId: req.headers['x-softwareid'] ?? '' },
+      });
+    }
+    return json(res, 200, {
+      status: 'SUCCESS',
+      data: { receiptNo: '0042_0022', softwareId: req.headers['x-softwareid'] ?? '' },
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-data-'));
+  try {
+    const okc = new OkcManager(
+      dataDir,
+      { host: '127.0.0.1', port, serialNo: 'FU00031401' },
+      (config) => saved.push(config),
+    );
+
+    const result = await okc.sell({ saleId: 's22', document, taxId: '6310077423' });
+
+    assert.equal(result.status, 'APPROVED');
+    assert.equal(okc.getConfig().softwareId, '6310077423');
+    assert.ok(saved.some((c) => c.softwareId === '6310077423'), 'ayar diske yazılmalı');
+  } finally {
+    server.close();
+  }
+});

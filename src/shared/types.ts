@@ -248,6 +248,18 @@ export interface OkcSaleRequest {
   saleId: string;
   /** `PUT /v1/documents/{id}` gövdesi — ajan için OPAK. */
   document: Record<string, unknown>;
+  /**
+   * Kafenin vergi kimliği — sunucunun bildirdiği `X-SoftwareId`.
+   *
+   * Ajanın kendi ayarındaki numaranın DOĞRULANDIĞI yer. Kurulum ekranına
+   * yazılan numara bir hane eksik olabilir ve cihaz onu reddettiğinde arıza
+   * "yazarkasa çalışmıyor" diye görünür — sebebi görünmez. Sunucu numarayı
+   * biliyorsa satışı, ayarın yanlış olduğunu bilerek göndermiyoruz.
+   *
+   * Yoksa (kafenin vergi kimliği tanımlı değilse) ajan kendi ayarıyla devam
+   * eder — eski davranış.
+   */
+  taxId?: string;
 }
 
 /**

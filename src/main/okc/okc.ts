@@ -249,6 +249,32 @@ export class OkcManager extends EventEmitter {
       return { saleId: request.saleId, status: 'DECLINED', error: 'Yazarkasa meşgul' };
     }
 
+    /**
+     * VKN AYRIŞMASI: BELGE AÇILMADAN ÖNCE DURUR.
+     *
+     * Sunucu kafenin vergi kimliğini biliyorsa ve kurulumda girilen numara ondan
+     * farklıysa, bu satışı denemenin iyi bir sonucu yok: cihaz `X-SoftwareId`
+     * eşleşmediği için reddeder ve kasiyer "yazarkasa çalışmıyor" görür. İki
+     * numaradan hangisinin yanlış olduğunu BİZ biliyoruz — söylüyoruz.
+     *
+     * Sunucunun numarayı bilmediği kafede kontrol yok ve olamaz; orada elimizde
+     * yalnızca kurulumcunun yazdığı numara var.
+     */
+    const expected = digitsOf(request.taxId);
+    // Ayar boşsa sunucunun bildirdiği numara ÖĞRENİLİR: doğruluk kaynağı
+    // sunucudaki kayıt, kurulum ekranındaki kutu değil.
+    if (expected) this.learnSoftwareId(expected);
+
+    const configured = digitsOf(this.config?.softwareId);
+    if (expected && configured && expected !== configured) {
+      return {
+        saleId: request.saleId,
+        status: 'DECLINED',
+        error:
+          'Yazılım kimliği (VKN) işletme kaydıyla uyuşmuyor — ajan ayarındaki numarayı düzeltin',
+      };
+    }
+
     this.busy = true;
     try {
       return await this.runSale(request);
@@ -613,6 +639,25 @@ export class OkcManager extends EventEmitter {
     }
   }
 
+  /**
+   * Sunucunun bildirdiği vergi kimliğini ayara yazar — YALNIZCA AYAR BOŞKEN.
+   *
+   * Dolu bir kutunun üstüne yazmıyoruz: cihaza girilen numara ayrışıyorsa
+   * bunun bir sebebi vardır ve sessizce düzeltmek, o sebebi kimseye
+   * sordurmamak olur. Ayrışma satışı durduruyor ve mesajı kasiyer görüyor;
+   * karar insanın.
+   *
+   * `serialNo` ile aynı desen: cihazdan/sunucudan öğrenilen bir gerçek, bir
+   * kez yazılır ve kurulum ekranında görünür.
+   */
+  private learnSoftwareId(taxId: string): void {
+    if (!this.config || digitsOf(this.config.softwareId)) return;
+    this.config = { ...this.config, softwareId: taxId };
+    this.persist(this.config);
+    this.rebuild();
+    log.info('okc yazılım kimliği (VKN) sunucudan öğrenildi');
+  }
+
   private rememberFingerprint(fingerprint: string): void {
     // Boş = oturum devam ettiği için sertifika sunulmadı. Öğrenilecek bir şey
     // yok ve boş bir değeri sabitlemek, sonraki her bağlantıyı reddettirirdi.
@@ -644,6 +689,17 @@ export class OkcManager extends EventEmitter {
       /* zaten yok */
     }
   }
+}
+
+/**
+ * Vergi kimliğini karşılaştırılabilir hâle getirir: yalnızca rakamlar.
+ *
+ * Aynı numara farklı yazılabiliyor — boşluk, nokta, baştaki sıfır. Ham metin
+ * karşılaştırmak, doğru numarayı yanlış sanıp çalışan bir kurulumu durdururdu.
+ */
+function digitsOf(value: string | undefined): string | null {
+  const digits = value?.replace(/\D/g, '') ?? '';
+  return digits.length > 0 ? digits : null;
 }
 
 function errorText(body: {

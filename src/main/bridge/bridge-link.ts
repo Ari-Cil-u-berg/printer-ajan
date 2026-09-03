@@ -47,6 +47,8 @@ interface SalePayload {
   currency: string;
   timeoutMs: number;
   reference: string;
+  /** Kafenin vergi kimliği — cihaza `X-SoftwareId` olarak gider. */
+  taxId?: string;
   fiscal?: { format: string; document: Record<string, unknown> };
 }
 
@@ -62,7 +64,11 @@ export interface BridgeLinkOptions {
   deviceKey: string;
   agentVersion: string;
   /** Satışı cihaza veren taraf — `OkcManager.sell`. */
-  sell: (input: { saleId: string; document: Record<string, unknown> }) => Promise<OkcSaleResult>;
+  sell: (input: {
+    saleId: string;
+    document: Record<string, unknown>;
+    taxId?: string;
+  }) => Promise<OkcSaleResult>;
   /** "Bu satış ne oldu?" — yalnızca BİZİM işlemimiz için cevap verir. */
   lookup: (saleId: string) => OkcSaleResult | null;
   /** Cihaz şu an ulaşılabilir mi — heartbeat'e yazılır. */
@@ -210,7 +216,11 @@ export class BridgeLink extends EventEmitter {
 
     this.emitAck(payload.intentId, true);
 
-    const result = await this.opts.sell({ saleId: payload.intentId, document });
+    const result = await this.opts.sell({
+      saleId: payload.intentId,
+      document,
+      ...(payload.taxId ? { taxId: payload.taxId } : {}),
+    });
     this.emitResult(result);
   }
 

@@ -71,6 +71,11 @@ function assertPrinter(value: unknown): PrinterConfig {
  * çağrı yolu için son savunmadır. Aynı kuralı iki yerde tutmak, birini
  * kaldırmanın diğerini de kaldırmasını engeller.
  */
+/** Serbest yazımı numaraya indirger: "123 456 78 90" → "1234567890". */
+function digitsOnly(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\D/g, '').slice(0, 11) : '';
+}
+
 function assertOkc(value: unknown): OkcConfig {
   const c = value as OkcConfig;
   if (!c || typeof c !== 'object') throw new Error('Geçersiz yazarkasa ayarı');
@@ -85,7 +90,21 @@ function assertOkc(value: unknown): OkcConfig {
   const label = typeof c.label === 'string' ? c.label.trim().slice(0, 60) : '';
   const text = (value: unknown): string =>
     typeof value === 'string' ? value.trim().slice(0, 64) : '';
-  const softwareId = text(c.softwareId);
+  /**
+   * `X-SoftwareId` VKN'DİR — burada biçimi sınanıyor.
+   *
+   * Cihaz bu başlıkta kurulumda kendisine yazılan vergi numarasını bekliyor;
+   * serbest bir metin kabul edilirse hata sahada, "yazarkasa çalışmıyor"
+   * kılığında görünür. On/on bir hane kuralı bir tercih değil, VKN ve TCKN'nin
+   * kendi uzunluğu.
+   *
+   * Rakam dışı karakterler ATILIR, reddedilmez: numarayı "123 456 7890" diye
+   * yazan kurulumcu doğru numarayı yazmıştır.
+   */
+  const softwareId = digitsOnly(c.softwareId);
+  if (softwareId && !/^\d{10,11}$/.test(softwareId)) {
+    throw new Error('Yazılım kimliği 10 haneli VKN ya da 11 haneli TCKN olmalı');
+  }
   const hardwareId = text(c.hardwareId);
   const serialNo = text(c.serialNo);
 
