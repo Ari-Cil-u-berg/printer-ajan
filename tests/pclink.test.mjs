@@ -214,8 +214,6 @@ test('her isteğe kimlik başlıklarını ekler', { skip: !tls }, async () => {
       const client = new PcLinkClient({
         host: '127.0.0.1',
         port,
-        // Aralıkta (8–20) bir değer: kısa olsaydı uzatılırdı ve bu test
-        // uzatmayı değil, başlığın geçtiğini doğruluyor.
         hardwareId: 'kasa-birinci',
         softwareId: '6310077423',
         serialNo: 'FU00001234',
@@ -228,8 +226,14 @@ test('her isteğe kimlik başlıklarını ekler', { skip: !tls }, async () => {
   assert.equal(headers['x-serialno'], 'FU00001234');
 });
 
-/** Boşluk yazılmış bir kasa adı, boş bir başlık kadar reddedilir. */
-test('X-HardwareId asla boş gitmez', { skip: !tls }, async () => {
+/**
+ * KASA KİMLİĞİ BOŞSA VKN'YE DÜŞER, MAKİNE ADINA DEĞİL.
+ *
+ * Eskiden `hostname()` gönderiliyordu ve cihaz `"x-hardwareid eşleşmiyor"`
+ * diyordu: başlık bizim seçtiğimiz bir ad değil, cihazda kayıtlı bir değer.
+ * Makine adı orada kayıtlı olamaz; VKN cihazın tanıdığı tek numaradır.
+ */
+test('HardwareId boşsa VKN gönderilir', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
     (req, res) => {
@@ -237,11 +241,36 @@ test('X-HardwareId asla boş gitmez', { skip: !tls }, async () => {
       json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
     },
     async (port) => {
-      const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId: '   ' });
+      // Boşluk da boş sayılır — kurulumcunun sekmeye basması bir kimlik değil.
+      const client = new PcLinkClient({
+        host: '127.0.0.1',
+        port,
+        hardwareId: '   ',
+        softwareId: '6310077423',
+      });
       await client.status();
     },
   );
-  assert.ok(headers['x-hardwareid'] && headers['x-hardwareid'].trim().length > 0);
+  assert.equal(headers['x-hardwareid'], '6310077423');
+});
+
+/**
+ * İkisi de bilinmiyorsa başlık HİÇ GİTMEZ. Cihaz "boş olamaz" der ve bu doğru
+ * hatadır; uydurulmuş bir kimlik "eşleşmiyor" der ve sebebi görünmez olur.
+ */
+test('HardwareId ve VKN yoksa başlık hiç gönderilmez', { skip: !tls }, async () => {
+  let headers = null;
+  await withDevice(
+    (req, res) => {
+      headers = req.headers;
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
+    },
+    async (port) => {
+      const client = new PcLinkClient({ host: '127.0.0.1', port });
+      await client.status();
+    },
+  );
+  assert.equal(headers['x-hardwareid'], undefined);
 });
 
 /**
@@ -297,46 +326,41 @@ test('ayarları okur — sicil numarası buradan öğreniliyor', { skip: !tls },
 });
 
 /**
- * CİHAZ UZUNLUK DAYATIYOR: `X-HardwareId` 8–20 karakter. Sahada öğrenildi —
- * `kasa-1` gönderen istek `"8 karakterden kısa ... olamaz"` ile reddedildi.
- * Kurulumcunun yazdığı kısa ad hata olarak dönmemeli; uzatılmalı.
+ * KİMLİK NORMALLEŞTİRİLMEZ — bu test bir regresyonu tutuyor.
+ *
+ * Uzunca `X-HardwareId`'yi serbest bir etiket sandık: cihazın "8 karakterden
+ * kısa, 20 karakterden uzun olamaz" uyarısını bir biçim kısıtı okuyup kısa
+ * olanı sha256 ekiyle uzattık, uzun olanı 20'ye kestik, `[A-Za-z0-9._-]`
+ * dışındaki karakterleri ayıkladık. Cihaz `"x-hardwareid eşleşmiyor"` diyerek
+ * bunu çürüttü: aralık bir kural değil, beklenen değerin kendi uzunluğuymuş.
+ *
+ * Üç dönüşümün üçü de eşleşmesi gereken bir değeri bozuyordu. Hiçbiri geri
+ * gelmemeli.
  */
-test('kısa bir HardwareId cihazın aralığına uzatılır', { skip: !tls }, async () => {
-  let headers = null;
-  await withDevice(
-    (req, res) => {
-      headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
-    },
-    async (port) => {
-      const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId: 'kasa-1' });
-      await client.status();
-    },
-  );
-  const id = headers['x-hardwareid'];
-  assert.ok(id.length >= 8 && id.length <= 20, `uzunluk aralık dışı: ${id.length}`);
-  assert.ok(id.startsWith('kasa-1'), 'kurulumcunun yazdığı ad korunmalı');
-});
-
-/** Aynı makine her açılışta aynı kimliği göndermeli. */
-test('uzatılan HardwareId kararlıdır', { skip: !tls }, async () => {
-  const seen = [];
-  for (let i = 0; i < 2; i += 1) {
+test('HardwareId olduğu gibi gider — kesilmez, uzatılmaz, ayıklanmaz', { skip: !tls }, async () => {
+  const cases = [
+    'kasa-1', // 6 karakter — eskiden uzatılırdı
+    'cok-uzun-bir-kasa-adi-buraya-sigmaz', // 35 karakter — eskiden kesilirdi
+    '00:1A:2B:3C:4D:5E', // eskiden iki noktalar ayıklanırdı
+  ];
+  for (const hardwareId of cases) {
+    let headers = null;
     await withDevice(
       (req, res) => {
-        seen.push(req.headers['x-hardwareid']);
+        headers = req.headers;
         json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
       },
       async (port) => {
-        const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId: 'kasa' });
+        const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId });
         await client.status();
       },
     );
+    assert.equal(headers['x-hardwareid'], hardwareId);
   }
-  assert.equal(seen[0], seen[1]);
 });
 
-test('uzun bir HardwareId 20 karaktere kesilir', { skip: !tls }, async () => {
+/** Girilen kimlik VKN'yi ezer: cihaz farklı bir kimlik bekliyorsa çıkış yolu bu. */
+test('girilen HardwareId VKN yerine geçer', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
     (req, res) => {
@@ -347,31 +371,14 @@ test('uzun bir HardwareId 20 karaktere kesilir', { skip: !tls }, async () => {
       const client = new PcLinkClient({
         host: '127.0.0.1',
         port,
-        hardwareId: 'cok-uzun-bir-kasa-adi-buraya-sigmaz',
+        hardwareId: 'HGN-0042',
+        softwareId: '6310077423',
       });
       await client.status();
     },
   );
-  assert.equal(headers['x-hardwareid'].length, 20);
-});
-
-/** Varsayılanlar da aralıkta olmalı; makine adı kısa ya da uzun olabilir. */
-test('varsayılan kimlikler aralığın içinde kalır', { skip: !tls }, async () => {
-  let headers = null;
-  await withDevice(
-    (req, res) => {
-      headers = req.headers;
-      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
-    },
-    async (port) => {
-      const client = new PcLinkClient({ host: '127.0.0.1', port });
-      await client.status();
-    },
-  );
-  // Yalnızca `X-HardwareId` biçime göre düzeltiliyor: onu BİZ seçiyoruz.
-  // `X-SoftwareId` bir eşleşme değeri ve varsayılanı yok.
-  const hw = headers['x-hardwareid'];
-  assert.ok(hw.length >= 8 && hw.length <= 20, `x-hardwareid aralık dışı: ${hw.length}`);
+  assert.equal(headers['x-hardwareid'], 'HGN-0042');
+  assert.equal(headers['x-softwareid'], '6310077423');
 });
 
 /**

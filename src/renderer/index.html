@@ -174,19 +174,21 @@
                 <dt>Ad</dt>
                 <dd><input id="okcLabel" type="text" placeholder="Kasa yazarkasası" autocomplete="off" /></dd>
                 <dt>VKN (yazılım kimliği)</dt>
-                <dd><input id="okcSoftwareId" type="text" placeholder="6310077423" inputmode="numeric" autocomplete="off" /></dd>
+                <dd><input id="okcSoftwareId" type="text" placeholder="6310077423 — işletme kaydından gelir" inputmode="numeric" autocomplete="off" /></dd>
                 <dt>Kasa kimliği</dt>
-                <dd><input id="okcHardwareId" type="text" placeholder="boş bırakılabilir" autocomplete="off" /></dd>
+                <dd><input id="okcHardwareId" type="text" placeholder="boşsa VKN kullanılır" autocomplete="off" /></dd>
                 <dt>Sicil no</dt>
                 <dd><input id="okcSerialNo" type="text" placeholder="FU00031401 — boşsa cihazdan okunur" autocomplete="off" /></dd>
               </dl>
               <p class="help">
-                <b>VKN</b> (<code>X-SoftwareId</code>) — cihazda PC Link uygulamasını
-                <b>ilk açtığınızda yazdığınız vergi numarası</b>. Birebir aynı olmalı; farklı bir
-                değer girilirse cihaz "eşleşmiyor" diyerek tüm istekleri reddeder.
-                <b>Kasa kimliği</b> (<code>X-HardwareId</code>) bu bilgisayarı tanıtır; boş
-                bırakırsanız makinenin adı kullanılır. Cihaz 8–20 karakter istiyor, kısa yazarsanız
-                otomatik uzatılır.
+                <b>VKN</b> (<code>X-SoftwareId</code>) — cihazda PC Link uygulamasına yazılan
+                vergi numarası. Birebir aynı olmalı; farklı bir değer girilirse cihaz "eşleşmiyor"
+                diyerek tüm istekleri reddeder. Bu kutuyu elle doldurmanız gerekmez: ilk satışta
+                işletme kaydındaki numara yazılır ve kayıt değişirse burası da güncellenir.
+                <b>Kasa kimliği</b> (<code>X-HardwareId</code>) da cihazda kayıtlı bir değerdir,
+                seçtiğiniz bir ad değil — boş bırakın, VKN kullanılır. Yalnızca cihaz farklı bir
+                kimlik bekliyorsa doldurun ve <b>markanın verdiği değeri birebir</b> yazın;
+                kısaltılmış ya da değiştirilmiş bir kimlik "eşleşmiyor" hatası verir.
                 <b>Sicil no</b> (<code>X-SerialNo</code>) boş bırakılırsa cihazdan okunur; cihaz
                 "sicil doğrulanamadı" diyorsa markanın verdiği numarayı elle yazın.
               </p>

@@ -201,16 +201,20 @@ export interface OkcConfig {
   /** Kasada görünen ad. */
   label?: string;
   /**
-   * `X-HardwareId` — cihazın çağıranı tanımak için ZORUNLU tuttuğu başlık.
+   * `X-HardwareId` — cihazda KAYITLI kimlik. Zorunlu ve birebir eşleşmeli.
    *
-   * Boş bırakılırsa makinenin kendi adı gönderiliyor. Doküman bu başlığı
-   * opsiyonel gösteriyor ama saha cihazı başlıksız her isteği reddediyor —
-   * bkz. `pclink.ts`.
+   * Boş bırakılırsa VKN gönderiliyor. Seçtiğimiz bir ad değil: cihaz kayıtlı
+   * değerle karşılaştırıyor ve uydurulmuş bir kimlik "eşleşmiyor" alıyor.
+   * Doküman bu başlığı opsiyonel gösteriyor ama saha cihazı başlıksız her
+   * isteği de reddediyor — bkz. `pclink.ts`.
    */
   hardwareId?: string;
   /**
    * `X-SoftwareId` — PC Link uygulamasına girilen VKN. Zorunlu ve birebir
    * eşleşmeli; boşsa istek hiç gönderilmiyor (bkz. `okc.ts` sağlık kontrolü).
+   *
+   * DİNAMİK: doğruluk kaynağı işletme kaydı, kurulum ekranı değil. Satışla
+   * gelen numara buradakinden farklıysa üstüne yazılır (`syncSoftwareId`).
    */
   softwareId?: string;
   /**

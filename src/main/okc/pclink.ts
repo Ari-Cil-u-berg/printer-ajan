@@ -1,6 +1,4 @@
 import https from 'node:https';
-import { createHash } from 'node:crypto';
-import { hostname } from 'node:os';
 import type { TLSSocket } from 'node:tls';
 import { log } from '../logger';
 
@@ -46,13 +44,24 @@ export interface PcLinkTarget {
    */
   fingerprint?: string;
   /**
-   * `X-HardwareId` — çağıran makineyi tanıtır.
+   * `X-HardwareId` — cihazda KAYITLI olan kimlik. Birebir eşleşmeli.
    *
    * ZORUNLU, dokümanın aksine. OpenAPI tanımı bu üç başlığı da
    * `required: false` işaretliyor; saha cihazı ise başlıksız her isteği
    * `ERR_UNAUTHORIZED — "X-HardwareId değeri boş olamaz"` ile reddediyor.
    * Dokümana güvenip göndermemek, `GET /v1/status` dahil HİÇBİR çağrının
    * çalışmaması demekti — sağlık göstergesi kırmızı, sebebi görünmez.
+   *
+   * BİZİM SEÇTİĞİMİZ BİR AD DEĞİL. Uzunca bunun serbest bir etiket olduğunu,
+   * cihazın yalnızca biçimine baktığını sandık ve kısa olanı uzatıp uzun olanı
+   * kestik. Cihaz `"x-hardwareid eşleşmiyor"` diyerek bunu çürüttü: başlık,
+   * `X-SoftwareId` gibi, kayıtlı bir değerle KARŞILAŞTIRILIYOR. "8 karakterden
+   * kısa, 20 karakterden uzun olamaz" kuralı bir biçim kısıtı değil, beklenen
+   * değerin kendi uzunluk aralığıymış — tıpkı `X-SoftwareId`'de on hanenin bir
+   * VKN'nin uzunluğu olması gibi. Aynı yanılgıya iki başlıkta iki kez düştük.
+   *
+   * Sonucu: bu değer de NORMALLEŞTİRİLMEZ. Boşsa VKN'ye düşer (bkz.
+   * `identityHeaders`), makine adına değil.
    */
   hardwareId?: string;
   /**
@@ -76,38 +85,6 @@ export interface PcLinkTarget {
    * boş bırakmaktan daha kötü bir cevap alır.
    */
   serialNo?: string;
-}
-
-/**
- * `X-HardwareId` uzunluk aralığı — cihazdan öğrenildi, dokümandan değil.
- *
- *   "X-HardwareId değeri boş olamaz"
- *   "x-hardwareid değeri 8 karakterden kısa, 20 karakterden uzun olamaz"
- *
- * Bu başlık çağıran makineyi TANITIYOR: değeri biz seçiyoruz ve cihaz yalnızca
- * biçimine bakıyor. `X-SoftwareId` ise öyle değil — aşağıya bakın.
- */
-const HARDWARE_ID_BOUNDS = { min: 8, max: 20 } as const;
-
-/**
- * Serbest metni cihazın kabul ettiği bir kimliğe çevirir.
- *
- * KISA OLANI UZATMAK, uzun olanı kesmek. "kasa-1" yazan kurulumcu haklı — o ad
- * kafede anlamlı; başlığın uzunluk kuralı bizim iç meselemiz ve kullanıcıya
- * hata olarak dönmesi gereksiz. Uzatma, adın kendisinden türetilen kararlı bir
- * ekle yapılıyor: aynı makine her açılışta aynı kimliği göndermeli, yoksa
- * cihaz tarafındaki kayıtlarda tek kasa birden çok görünür.
- */
-function normalizeId(
-  raw: string,
-  seed: string,
-  bounds: { min: number; max: number },
-): string {
-  const cleaned = raw.trim().replace(/[^A-Za-z0-9._-]/g, '');
-  if (cleaned.length >= bounds.min) return cleaned.slice(0, bounds.max);
-
-  const suffix = createHash('sha256').update(seed || cleaned).digest('hex');
-  return `${cleaned}${suffix}`.slice(0, Math.min(bounds.min + 8, bounds.max));
 }
 
 /**
@@ -231,26 +208,22 @@ export class PcLinkClient {
   /**
    * Cihazın istediği kimlik başlıkları.
    *
-   * `X-HardwareId` boş GEÇİLEMEZ — cihaz isteği reddediyor. Yapılandırmada
-   * yoksa makinenin kendi adına düşüyoruz: bu başlığın işi çağıranı ayırt
-   * etmek ve kafedeki tek kasanın adı bunu yapar. Sabit bir dize yazmak,
-   * ikinci bir kasa eklendiği gün ikisini ayırt edilemez kılardı.
+   * ÜÇÜ DE OLDUĞU GİBİ GİDER, düzeltilmeden. Hiçbiri bir biçim değil, üçü de
+   * bir EŞLEŞME: cihaz kayıtlı değerle karşılaştırıyor ve kırpmak, uzatmak ya
+   * da karakter ayıklamak eşleşmesi gereken bir değeri bozmak demek. Boş olanı
+   * hiç göndermiyoruz — uydurulmuş bir kimlik, cihazın "boş olamaz" demesinden
+   * daha yanıltıcı bir hata veriyor.
+   *
+   * `X-HardwareId` boşsa VKN'ye düşüyor. Makine adına DEĞİL: makine adı cihazda
+   * kayıtlı olmayan bir dizedir ve garanti bir `"eşleşmiyor"` üretir. Kafenin
+   * vergi kimliği ise cihazın tanıdığı tek numaradır ve 10 hane (TCKN'de 11)
+   * cihazın istediği 8–20 aralığına zaten oturur.
    */
   private identityHeaders(): Record<string, string> {
-    const machine = hostname();
     const softwareId = this.target.softwareId?.trim();
+    const hardwareId = this.target.hardwareId?.trim() || softwareId;
     return {
-      'X-HardwareId': normalizeId(
-        this.target.hardwareId?.trim() || machine,
-        machine,
-        HARDWARE_ID_BOUNDS,
-      ),
-      // OLDUĞU GİBİ, düzeltilmeden. Bu başlık bir biçim değil, bir EŞLEŞME:
-      // PC Link uygulaması ilk açıldığında girilen VKN ne ise başlık da o
-      // olmalı. Uzunluğa göre kırpmak ya da uzatmak, eşleşmesi gereken bir
-      // değeri bozmak demek — 11 haneli bir TCKN'yi 10'a kesmek, garanti bir
-      // "eşleşmiyor" üretirdi. Boşsa hiç gönderilmiyor: uydurulmuş bir değer,
-      // cihazın "boş olamaz" demesinden daha yanıltıcı bir hata veriyor.
+      ...(hardwareId ? { 'X-HardwareId': hardwareId } : {}),
       ...(softwareId ? { 'X-SoftwareId': softwareId } : {}),
       ...(this.target.serialNo?.trim() ? { 'X-SerialNo': this.target.serialNo.trim() } : {}),
     };

@@ -250,30 +250,21 @@ export class OkcManager extends EventEmitter {
     }
 
     /**
-     * VKN AYRIŞMASI: BELGE AÇILMADAN ÖNCE DURUR.
+     * VKN DİNAMİK: SATIŞLA BİRLİKTE GELİR, KURULUMDA SABİTLENMEZ.
      *
-     * Sunucu kafenin vergi kimliğini biliyorsa ve kurulumda girilen numara ondan
-     * farklıysa, bu satışı denemenin iyi bir sonucu yok: cihaz `X-SoftwareId`
-     * eşleşmediği için reddeder ve kasiyer "yazarkasa çalışmıyor" görür. İki
-     * numaradan hangisinin yanlış olduğunu BİZ biliyoruz — söylüyoruz.
+     * Eskiden bu blok ayrışmayı bir hata sayıyor ve satışı reddediyordu —
+     * kurulumcunun yazdığı numaranın tek doğru olduğu varsayımıyla. O varsayım
+     * düştü: vergi kimliği artık işletme kaydından geliyor ve değişebiliyor.
+     * Ayrışmayı reddetmek, numarası güncellenmiş her kafede kasayı durdururdu.
      *
-     * Sunucunun numarayı bilmediği kafede kontrol yok ve olamaz; orada elimizde
-     * yalnızca kurulumcunun yazdığı numara var.
+     * Doğruluk kaynağı SUNUCU. Ayardaki kutu onun görünen kopyası; farklıysa
+     * üstüne yazılır, eşitse dokunulmaz.
+     *
+     * Sunucunun numarayı bildirmediği çağrıda öğrenilecek bir şey yok; orada
+     * elimizde yalnızca ayardaki son bilinen numara var ve onunla gidiyoruz.
      */
     const expected = digitsOf(request.taxId);
-    // Ayar boşsa sunucunun bildirdiği numara ÖĞRENİLİR: doğruluk kaynağı
-    // sunucudaki kayıt, kurulum ekranındaki kutu değil.
-    if (expected) this.learnSoftwareId(expected);
-
-    const configured = digitsOf(this.config?.softwareId);
-    if (expected && configured && expected !== configured) {
-      return {
-        saleId: request.saleId,
-        status: 'DECLINED',
-        error:
-          'Yazılım kimliği (VKN) işletme kaydıyla uyuşmuyor — ajan ayarındaki numarayı düzeltin',
-      };
-    }
+    if (expected) this.syncSoftwareId(expected);
 
     this.busy = true;
     try {
@@ -640,22 +631,28 @@ export class OkcManager extends EventEmitter {
   }
 
   /**
-   * Sunucunun bildirdiği vergi kimliğini ayara yazar — YALNIZCA AYAR BOŞKEN.
+   * Sunucunun bildirdiği vergi kimliğini ayara yazar — HER DEĞİŞTİĞİNDE.
    *
-   * Dolu bir kutunun üstüne yazmıyoruz: cihaza girilen numara ayrışıyorsa
-   * bunun bir sebebi vardır ve sessizce düzeltmek, o sebebi kimseye
-   * sordurmamak olur. Ayrışma satışı durduruyor ve mesajı kasiyer görüyor;
-   * karar insanın.
+   * Eskiden yalnızca kutu boşken yazıyordu ve ayrışma bir hata sayılıyordu.
+   * VKN dinamik olunca bu ters döndü: dolu kutunun üstüne yazmamak, işletme
+   * kaydı güncellendiği gün kasayı süresiz durdurmak demek.
    *
-   * `serialNo` ile aynı desen: cihazdan/sunucudan öğrenilen bir gerçek, bir
-   * kez yazılır ve kurulum ekranında görünür.
+   * Değişiklikte istemci yeniden kuruluyor: `X-SoftwareId` ve — ayrıca
+   * girilmediyse — `X-HardwareId` bu numaradan türüyor, yani eski istemci eski
+   * numarayı göndermeye devam ederdi.
+   *
+   * Eşitse hiçbir şey yapılmıyor. Her satışta diske yazıp istemciyi yeniden
+   * kurmak, hiçbir şeyin değişmediği durumda saf gürültü olurdu.
    */
-  private learnSoftwareId(taxId: string): void {
-    if (!this.config || digitsOf(this.config.softwareId)) return;
+  private syncSoftwareId(taxId: string): void {
+    if (!this.config || digitsOf(this.config.softwareId) === taxId) return;
+    const previous = digitsOf(this.config.softwareId);
     this.config = { ...this.config, softwareId: taxId };
     this.persist(this.config);
     this.rebuild();
-    log.info('okc yazılım kimliği (VKN) sunucudan öğrenildi');
+    log.info('okc yazılım kimliği (VKN) sunucudan güncellendi', {
+      changed: Boolean(previous),
+    });
   }
 
   private rememberFingerprint(fingerprint: string): void {

@@ -32,7 +32,7 @@ interface OkcConfig {
   label?: string;
   /** `X-SoftwareId` — PC Link'e girilen VKN. Birebir eşleşmeli. */
   softwareId?: string;
-  /** `X-HardwareId` — bu bilgisayarı tanıtır. Boşsa makine adı kullanılır. */
+  /** `X-HardwareId` — cihazda kayıtlı kimlik. Boşsa VKN kullanılır. */
   hardwareId?: string;
   /** `X-SerialNo` — boşsa cihazdan öğrenilir, elle de girilebilir. */
   serialNo?: string;

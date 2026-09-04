@@ -311,24 +311,44 @@ test('adı geçmeyen satış için iptal reddedilir', { skip: !tls }, async () =
 });
 
 /**
- * `X-SoftwareId` = VKN, ve doğruluk kaynağı SUNUCUDAKİ kayıt.
+ * VKN DİNAMİK: AYRIŞMA SATIŞI DURDURMAZ, AYARI GÜNCELLER.
  *
- * Kurulum ekranına elle yazılan numara bir hane eksik olabilir. O durumda
- * cihaz her çağrıyı reddeder ve arıza "yazarkasa çalışmıyor" kılığında
- * görünür — sebebi görünmez. Sunucu numarayı emirle birlikte gönderdiği için
- * ayrışmayı BİZ yakalayabiliyoruz.
+ * Bu test eskiden tersini tutuyordu — ayrışan numarada satış `DECLINED`
+ * dönüyordu, kurulumcunun yazdığı numaranın tek doğru olduğu varsayımıyla. O
+ * varsayım düştü: vergi kimliği işletme kaydından geliyor ve değişebiliyor.
+ * Reddetmeyi sürdürmek, numarası güncellenen her kafede kasayı durdururdu.
+ *
+ * Doğruluk kaynağı sunucu: yeni numara ayara yazılır ve AYNI satışın
+ * başlıklarında gider — bir sonrakinde değil.
  */
-test('ayrışan VKN belge AÇILMADAN satışı durdurur', { skip: !tls }, async () => {
+test('ayrışan VKN satışı durdurmaz, ayarı günceller', { skip: !tls }, async () => {
+  const seen = [];
   await withDevice(
-    (req, res) => json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-20' } }),
-    async (okc, calls) => {
-      // Ajan ayarı 6310077423; sunucunun bildiği numara başka.
+    (req, res) => {
+      seen.push({
+        softwareId: req.headers['x-softwareid'],
+        hardwareId: req.headers['x-hardwareid'],
+      });
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-20' } });
+      }
+      return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0020' } });
+    },
+    async (okc) => {
+      // Ajan ayarı 6310077423; işletme kaydındaki numara başka.
       const result = await okc.sell({ saleId: 's20', document, taxId: '9999999999' });
 
-      assert.equal(result.status, 'DECLINED');
-      assert.match(result.error, /uyuşmuyor/);
-      // Cihaza HİÇ gidilmemeli: açılan bir belge, kapatılması gereken bir belge.
-      assert.deepEqual(calls, []);
+      assert.equal(result.status, 'APPROVED');
+      assert.equal(okc.getConfig().softwareId, '9999999999');
+      // Eski numarayla TEK BİR istek bile gitmemeli: istemci belge açılmadan
+      // önce yeniden kurulmalı, yoksa cihaz ilk çağrıyı "eşleşmiyor" ile
+      // reddeder ve satış hiç başlamaz.
+      assert.ok(seen.length > 0, 'cihaza gidilmiş olmalı');
+      for (const headers of seen) {
+        assert.equal(headers.softwareId, '9999999999');
+        // Kasa kimliği girilmediği için VKN'ye düşüyor — o da yenisi olmalı.
+        assert.equal(headers.hardwareId, '9999999999');
+      }
     },
   );
 });
@@ -344,7 +364,9 @@ test('aynı VKN satışı engellemez — biçim farkı da bozmaz', { skip: !tls 
     async (okc) => {
       const result = await okc.sell({ saleId: 's21', document, taxId: '631 007-7423' });
       assert.equal(result.status, 'APPROVED');
-      // Dolu ayarın üstüne YAZILMAZ: öğrenme yalnızca boş kutu için.
+      // Rakamlar aynı: biçim farkı bir güncelleme DEĞİLDİR. Boşluk ve tireye
+      // bakıp diske yazmak, her satışta gereksiz bir yazma ve istemci kurulumu
+      // olurdu.
       assert.equal(okc.getConfig().softwareId, '6310077423');
     },
   );
