@@ -125,16 +125,26 @@ export class OkcManager extends EventEmitter {
       return this.health;
     }
 
-    // VKN OLMADAN İSTEK GÖNDERMİYORUZ. Cihaz `X-SoftwareId`'yi zorunlu
-    // tutuyor ve PC Link'e girilen VKN ile eşleşmesini bekliyor; boş
-    // gönderdiğimizde dönen `"boş olamaz"`, kurulumcuya ne yapacağını
-    // söylemiyor. Eksik olduğunu BİZ biliyoruz — cihazın ağzından duymayı
-    // beklemek, cevabı olan bir soruyu başkasına sordurmak olurdu.
-    if (!this.config.softwareId?.trim()) {
+    /**
+     * VKN BOŞSA ÖNCE CİHAZA SORUYORUZ.
+     *
+     * Eskiden burada durup "yazılım kimliği girilmedi" diyorduk ve bu, cevabı
+     * olan bir soruyu kurulumcuya sordurmaktı: doğru numara cihazın kendi
+     * mükellef kaydında duruyor (`GET /v1/settings` → `merchant.taxId`) ve o
+     * çağrı `X-SoftwareId` olmadan da yanıtlanıyor.
+     *
+     * Cihaz da vermezse eski davranış geri geliyor — ama artık "denedik,
+     * cihaz söylemedi" diyerek.
+     */
+    if (!digitsOf(this.config.softwareId)) {
+      await this.learnFromSettings();
+    }
+    if (!digitsOf(this.config?.softwareId)) {
       this.health = {
         configured: true,
         ok: false,
-        error: 'Yazılım kimliği girilmedi — PC Link uygulamasına yazdığınız VKN olmalı',
+        error:
+          'Yazılım kimliği (VKN) yok — cihazdan da okunamadı. Yazarkasanın mükellef ayarındaki vergi numarasını girin.',
         checkedAt: new Date().toISOString(),
         pendingSale: this.readPending()?.saleId,
       };
@@ -145,7 +155,7 @@ export class OkcManager extends EventEmitter {
     try {
       const response = await this.client.status();
       this.rememberFingerprint(response.fingerprint);
-      await this.learnSerialNo();
+      await this.learnFromSettings();
 
       const body = response.data as {
         state?: string;
@@ -250,21 +260,30 @@ export class OkcManager extends EventEmitter {
     }
 
     /**
-     * VKN DİNAMİK: SATIŞLA BİRLİKTE GELİR, KURULUMDA SABİTLENMEZ.
+     * VKN'NİN DOĞRULUK KAYNAĞI CİHAZDIR, SUNUCU DEĞİL.
      *
-     * Eskiden bu blok ayrışmayı bir hata sayıyor ve satışı reddediyordu —
-     * kurulumcunun yazdığı numaranın tek doğru olduğu varsayımıyla. O varsayım
-     * düştü: vergi kimliği artık işletme kaydından geliyor ve değişebiliyor.
-     * Ayrışmayı reddetmek, numarası güncellenmiş her kafede kasayı durdururdu.
+     * `X-SoftwareId`'nin eşleşmesi gereken numara, cihazın kendi mükellef
+     * kaydındaki vergi numarası — `GET /v1/settings` onu döndürüyor ve
+     * `learnFromSettings` oradan alıp ayara yazıyor. Sahada "hep x-softwareid
+     * yanlış" diyen kurulumların tamamı buydu: doğru numara cihazın içinde
+     * duruyordu ve kimse ona sormuyordu.
      *
-     * Doğruluk kaynağı SUNUCU. Ayardaki kutu onun görünen kopyası; farklıysa
-     * üstüne yazılır, eşitse dokunulmaz.
+     * Sunucudan gelen numara YALNIZCA AYAR BOŞKEN yazılıyor. Ayrışıyorlarsa
+     * biri yanlış ve bunu uyarı olarak bırakıyoruz; sunucunun kaydıyla cihazın
+     * ayarını EZMEK, işletme kaydına yanlış numara girildiği gün çalışan bir
+     * kasayı durdurmak olurdu — ve cihaz o numarayı zaten kabul etmez.
      *
-     * Sunucunun numarayı bildirmediği çağrıda öğrenilecek bir şey yok; orada
-     * elimizde yalnızca ayardaki son bilinen numara var ve onunla gidiyoruz.
+     * Satış BU YÜZDEN DURMUYOR: ayrışma bir uyarı, mali bir engel değil.
      */
-    const expected = digitsOf(request.taxId);
-    if (expected) this.syncSoftwareId(expected);
+    const fromServer = digitsOf(request.taxId);
+    const configured = digitsOf(this.config?.softwareId);
+    if (fromServer && !configured) {
+      this.syncSoftwareId(fromServer, 'sunucu');
+    } else if (fromServer && configured && fromServer !== configured) {
+      log.warn('okc VKN ayrışması — cihazdaki numara kullanılıyor', {
+        saleId: request.saleId,
+      });
+    }
 
     this.busy = true;
     try {
@@ -613,18 +632,37 @@ export class OkcManager extends EventEmitter {
    * Bir kez, sessizce. Başarısız olması sağlığı düşürmez — sicil olmadan da
    * `status` çalışıyor ve bir sonraki kontrolde yeniden denenir.
    */
-  private async learnSerialNo(): Promise<void> {
-    if (!this.client || !this.config || this.config.serialNo) return;
+  private async learnFromSettings(): Promise<void> {
+    if (!this.client || !this.config) return;
+    // Öğrenecek bir şey kalmadıysa cihazı boşuna yormuyoruz.
+    if (this.config.serialNo && digitsOf(this.config.softwareId)) return;
     try {
       const response = await this.client.settings();
+
       const serialNo = response.data.serialNo?.trim();
-      if (!serialNo) return;
-      this.config = { ...this.config, serialNo };
-      this.persist(this.config);
-      this.rebuild();
-      log.info('okc sicil numarası okundu', { serialNo });
+      if (serialNo && !this.config.serialNo) {
+        this.config = { ...this.config, serialNo };
+        this.persist(this.config);
+        this.rebuild();
+        log.info('okc sicil numarası okundu', { serialNo });
+      }
+
+      /**
+       * `X-SoftwareId`'NİN DOĞRU KAYNAĞI BURASI.
+       *
+       * Başlığın eşleşmesi gereken numara, cihazın KENDİ mükellef kaydındaki
+       * vergi numarasıdır — kurulum ekranına elle yazılan değil. Sahada "hep
+       * x-softwareid yanlış" diyen kurulumların tamamı bu: doğru numara
+       * cihazın içinde duruyor ve kimse ona sormuyordu.
+       *
+       * Cihazın beyanı SUNUCUNUNKİNİ YENER. Ayrışıyorlarsa biri yanlış ve o
+       * ayrışma ayrıca uyarı olarak düşüyor; ama cihazınkini kullanmazsak
+       * hiçbir çağrı çalışmaz ve kasa tamamen durur.
+       */
+      const deviceTaxId = digitsOf(response.data.merchant?.taxId);
+      if (deviceTaxId) this.syncSoftwareId(deviceTaxId, 'cihaz');
     } catch (err) {
-      log.warn('okc sicil numarası okunamadı', {
+      log.warn('okc ayarları okunamadı', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -644,13 +682,14 @@ export class OkcManager extends EventEmitter {
    * Eşitse hiçbir şey yapılmıyor. Her satışta diske yazıp istemciyi yeniden
    * kurmak, hiçbir şeyin değişmediği durumda saf gürültü olurdu.
    */
-  private syncSoftwareId(taxId: string): void {
+  private syncSoftwareId(taxId: string, source: 'cihaz' | 'sunucu'): void {
     if (!this.config || digitsOf(this.config.softwareId) === taxId) return;
     const previous = digitsOf(this.config.softwareId);
     this.config = { ...this.config, softwareId: taxId };
     this.persist(this.config);
     this.rebuild();
-    log.info('okc yazılım kimliği (VKN) sunucudan güncellendi', {
+    log.info('okc yazılım kimliği (VKN) güncellendi', {
+      source,
       changed: Boolean(previous),
     });
   }

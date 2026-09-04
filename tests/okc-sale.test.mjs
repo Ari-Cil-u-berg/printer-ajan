@@ -321,7 +321,16 @@ test('adı geçmeyen satış için iptal reddedilir', { skip: !tls }, async () =
  * Doğruluk kaynağı sunucu: yeni numara ayara yazılır ve AYNI satışın
  * başlıklarında gider — bir sonrakinde değil.
  */
-test('ayrışan VKN satışı durdurmaz, ayarı günceller', { skip: !tls }, async () => {
+/**
+ * VKN'NİN DOĞRULUK KAYNAĞI CİHAZDIR.
+ *
+ * `X-SoftwareId`'nin eşleşmesi gereken numara cihazın kendi mükellef
+ * kaydındaki vergi numarası — sunucunun kaydı değil. Sunucudan gelen farklı
+ * bir numarayla ayarı ezmek, cihazın kabul etmeyeceği bir başlık göndermek ve
+ * çalışan bir kasayı durdurmak demekti. Sahadaki "hep x-softwareid yanlış"
+ * tam olarak buydu.
+ */
+test('sunucudaki farklı VKN cihazın numarasını EZMEZ', { skip: !tls }, async () => {
   const seen = [];
   await withDevice(
     (req, res) => {
@@ -335,22 +344,47 @@ test('ayrışan VKN satışı durdurmaz, ayarı günceller', { skip: !tls }, asy
       return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0020' } });
     },
     async (okc) => {
-      // Ajan ayarı 6310077423; işletme kaydındaki numara başka.
+      // Ajan ayarı 6310077423 (cihazdan gelen); sunucunun kaydı başka.
       const result = await okc.sell({ saleId: 's20', document, taxId: '9999999999' });
 
+      // Satış DURMUYOR: ayrışma bir uyarı, mali bir engel değil.
       assert.equal(result.status, 'APPROVED');
-      assert.equal(okc.getConfig().softwareId, '9999999999');
-      // Eski numarayla TEK BİR istek bile gitmemeli: istemci belge açılmadan
-      // önce yeniden kurulmalı, yoksa cihaz ilk çağrıyı "eşleşmiyor" ile
-      // reddeder ve satış hiç başlamaz.
+      assert.equal(okc.getConfig().softwareId, '6310077423');
       assert.ok(seen.length > 0, 'cihaza gidilmiş olmalı');
       for (const headers of seen) {
-        assert.equal(headers.softwareId, '9999999999');
-        // Kasa kimliği girilmediği için VKN'ye düşüyor — o da yenisi olmalı.
-        assert.equal(headers.hardwareId, '9999999999');
+        // Cihaza giden numara cihazın kendi numarası olmalı — aksi halde
+        // "x-softwareid eşleşmiyor" ile her çağrı reddedilirdi.
+        assert.equal(headers.softwareId, '6310077423');
       }
     },
   );
+});
+
+/** Ayar boşken sunucunun numarası yine de bir başlangıç noktası. */
+test('ayar boşken sunucunun VKN’si yazılır', { skip: !tls }, async () => {
+  const server = https.createServer({ key: tls.key, cert: tls.cert }, (req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/documents') {
+      return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-23' } });
+    }
+    return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0023' } });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-data-'));
+  try {
+    const okc = new OkcManager(
+      dataDir,
+      { host: '127.0.0.1', port, serialNo: 'FU00031401' },
+      () => {},
+    );
+
+    const result = await okc.sell({ saleId: 's23', document, taxId: '6310077423' });
+
+    assert.equal(result.status, 'APPROVED');
+    assert.equal(okc.getConfig().softwareId, '6310077423');
+  } finally {
+    server.close();
+  }
 });
 
 test('aynı VKN satışı engellemez — biçim farkı da bozmaz', { skip: !tls }, async () => {
@@ -407,6 +441,45 @@ test('boş VKN ayarı sunucudan öğrenilir ve saklanır', { skip: !tls }, async
     assert.equal(result.status, 'APPROVED');
     assert.equal(okc.getConfig().softwareId, '6310077423');
     assert.ok(saved.some((c) => c.softwareId === '6310077423'), 'ayar diske yazılmalı');
+  } finally {
+    server.close();
+  }
+});
+
+/**
+ * DOĞRU NUMARA CİHAZIN İÇİNDE DURUYOR.
+ *
+ * `GET /v1/settings` cevabındaki `merchant.taxId`, `X-SoftwareId`'nin
+ * eşleşmesi gereken numaranın ta kendisi. Kurulum ekranına elle yazılan değer
+ * bir tahmindi; bu, cihazın kendi beyanı.
+ */
+test('VKN cihazın ayarlarından okunur ve saklanır', { skip: !tls }, async () => {
+  const saved = [];
+  const server = https.createServer({ key: tls.key, cert: tls.cert }, (req, res) => {
+    if (req.url === '/v1/settings') {
+      return json(res, 200, {
+        status: 'SUCCESS',
+        data: { serialNo: 'FU00031401', merchant: { taxId: '6310077423' } },
+      });
+    }
+    return json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-data-'));
+  try {
+    // Ne sicil ne VKN girilmiş: kurulumcu yalnızca adresi yazmış.
+    const okc = new OkcManager(dataDir, { host: '127.0.0.1', port }, (config) =>
+      saved.push(config),
+    );
+
+    const health = await okc.refreshHealth();
+
+    assert.equal(okc.getConfig().softwareId, '6310077423');
+    assert.equal(okc.getConfig().serialNo, 'FU00031401');
+    assert.ok(saved.some((c) => c.softwareId === '6310077423'), 'ayar diske yazılmalı');
+    // Numara bulunduğu için sağlık kontrolü "eksik" demiyor.
+    assert.ok(!/girilmedi|okunamadı/.test(health.error ?? ''), health.error);
   } finally {
     server.close();
   }

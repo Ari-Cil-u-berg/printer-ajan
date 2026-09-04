@@ -229,9 +229,19 @@ export class PcLinkClient {
     };
   }
 
-  /** `GET /v1/settings` — sicil, mükellef bilgisi, lisans tarihi, departmanlar. */
+  /**
+   * `GET /v1/settings` — sicil, mükellef bilgisi, lisans tarihi, departmanlar.
+   *
+   * `merchant.taxId` BURADAN OKUNUYOR ve önemi büyük: `X-SoftwareId`'nin
+   * eşleşmesi gereken numara cihazın kendi mükellef kaydındaki numaradır.
+   * Kurulum ekranına elle yazılan değer bir tahmin; bu, cihazın kendi beyanı.
+   */
   settings(): Promise<
-    PcLinkResponse<{ serialNo?: string; licenceExpirationDate?: string }>
+    PcLinkResponse<{
+      serialNo?: string;
+      licenceExpirationDate?: string;
+      merchant?: { taxId?: string };
+    }>
   > {
     return this.request('GET', '/v1/settings', undefined, STATUS_TIMEOUT_MS);
   }
