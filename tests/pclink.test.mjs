@@ -214,14 +214,15 @@ test('her isteğe kimlik başlıklarını ekler', { skip: !tls }, async () => {
       const client = new PcLinkClient({
         host: '127.0.0.1',
         port,
-        hardwareId: 'kasa-birinci',
         softwareId: '6310077423',
         serialNo: 'FU00001234',
       });
       await client.status();
     },
   );
-  assert.equal(headers['x-hardwareid'], 'kasa-birinci');
+  // İKİ BAŞLIK, TEK NUMARA: cihaz `X-HardwareId`'de de kafenin VKN'sini
+  // bekliyor. Ayrı bir kimlik seçmek, kilitlenmenin garantili yoluydu.
+  assert.equal(headers['x-hardwareid'], '6310077423');
   assert.equal(headers['x-softwareid'], '6310077423');
   assert.equal(headers['x-serialno'], 'FU00001234');
 });
@@ -337,13 +338,12 @@ test('ayarları okur — sicil numarası buradan öğreniliyor', { skip: !tls },
  * Üç dönüşümün üçü de eşleşmesi gereken bir değeri bozuyordu. Hiçbiri geri
  * gelmemeli.
  */
-test('HardwareId olduğu gibi gider — kesilmez, uzatılmaz, ayıklanmaz', { skip: !tls }, async () => {
-  const cases = [
-    'kasa-1', // 6 karakter — eskiden uzatılırdı
-    'cok-uzun-bir-kasa-adi-buraya-sigmaz', // 35 karakter — eskiden kesilirdi
-    '00:1A:2B:3C:4D:5E', // eskiden iki noktalar ayıklanırdı
-  ];
-  for (const hardwareId of cases) {
+test('kimlik başlıkları olduğu gibi gider — kesilmez, uzatılmaz, ayıklanmaz', { skip: !tls }, async () => {
+  // Eskiden `X-HardwareId` serbest bir etiket sanılıp normalleştiriliyordu:
+  // kısa olan sha256 ekiyle uzatılır, uzun olan 20'ye kesilir, `[A-Za-z0-9._-]`
+  // dışı ayıklanırdı. Üçü de eşleşmesi gereken bir değeri bozuyordu.
+  const cases = ['6310077423', '12345678901'];
+  for (const taxId of cases) {
     let headers = null;
     await withDevice(
       (req, res) => {
@@ -351,16 +351,23 @@ test('HardwareId olduğu gibi gider — kesilmez, uzatılmaz, ayıklanmaz', { sk
         json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
       },
       async (port) => {
-        const client = new PcLinkClient({ host: '127.0.0.1', port, hardwareId });
+        const client = new PcLinkClient({ host: '127.0.0.1', port, softwareId: taxId });
         await client.status();
       },
     );
-    assert.equal(headers['x-hardwareid'], hardwareId);
+    assert.equal(headers['x-hardwareid'], taxId);
+    assert.equal(headers['x-softwareid'], taxId);
   }
 });
 
-/** Girilen kimlik VKN'yi ezer: cihaz farklı bir kimlik bekliyorsa çıkış yolu bu. */
-test('girilen HardwareId VKN yerine geçer', { skip: !tls }, async () => {
+/**
+ * AYRI BİR KASA KİMLİĞİ ARTIK YOK.
+ *
+ * Kurulum ekranındaki kutuya yazılan her değer cihazı kilitliyordu; eski ayar
+ * dosyalarında kalan alan da okunmamalı, yoksa güncelleme tam da bu duruma
+ * düşmüş kurulumlarda hiçbir şeyi düzeltmez.
+ */
+test('eski hardwareId ayarı okunmaz', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
     (req, res) => {
@@ -371,14 +378,14 @@ test('girilen HardwareId VKN yerine geçer', { skip: !tls }, async () => {
       const client = new PcLinkClient({
         host: '127.0.0.1',
         port,
-        hardwareId: 'HGN-0042',
         softwareId: '6310077423',
+        // Tipte yok; eski bir ayar dosyasından gelmiş gibi.
+        hardwareId: 'HGN-0042',
       });
       await client.status();
     },
   );
-  assert.equal(headers['x-hardwareid'], 'HGN-0042');
-  assert.equal(headers['x-softwareid'], '6310077423');
+  assert.equal(headers['x-hardwareid'], '6310077423');
 });
 
 /**
