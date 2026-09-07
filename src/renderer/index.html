@@ -179,6 +179,16 @@
                 <dd><input id="okcSerialNo" type="text" placeholder="FU00031401 — boşsa cihazdan okunur" autocomplete="off" /></dd>
               </dl>
               <p class="help">
+                <b>"eşleşmiyor" hatası alıyorsanız</b> <code>Kimliği keşfet</code>'e basın: ajan,
+                cihazın kabul ettiği <code>X-HardwareId</code> değerini adayları tek tek deneyerek
+                bulur. <b>VKN değiştiyse</b> cihazda hâlâ eski numara kayıtlı olabilir — eski
+                numarayı aşağıdaki kutuya yazıp keşfi başlatın.
+              </p>
+              <dl class="kv">
+                <dt>Eski VKN (yalnızca keşif için)</dt>
+                <dd><input id="okcLegacyTaxId" type="text" placeholder="cihazda kayıtlı olabilecek önceki numara" inputmode="numeric" autocomplete="off" /></dd>
+              </dl>
+              <p class="help">
                 <b>VKN</b> — yazarkasanın mükellef kaydındaki vergi numarası. Cihaz bu numarayı
                 <code>X-SoftwareId</code> <b>ve</b> <code>X-HardwareId</code> başlıklarının
                 ikisinde de bekliyor; başka bir değer gelirse "eşleşmiyor" diyerek tüm istekleri
@@ -190,6 +200,7 @@
               <div class="row">
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>
                 <button id="okcTestBtn" class="ghost">Bağlantıyı sına</button>
+                <button id="okcDiscoverBtn" class="ghost">Kimliği keşfet</button>
                 <button id="okcClearBtn" class="ghost danger">Kaldır</button>
               </div>
               <p class="msg" id="okcMsg" role="status"></p>

@@ -3,6 +3,7 @@ import type {
   LogEntry,
   OkcConfig,
   OkcHealth,
+  OkcIdentityProbe,
   OkcSaleResult,
   PrinterConfig,
   StatusSnapshot,
@@ -33,6 +34,10 @@ const api = {
   retryOkc: (): Promise<{ ok: true; data: OkcSaleResult | null } | { ok: false; error: string }> =>
     ipcRenderer.invoke('okc:retry'),
   cancelOkc: () => ipcRenderer.invoke('okc:cancel'),
+  discoverOkcIdentity: (
+    extra?: string,
+  ): Promise<{ ok: true; data: OkcIdentityProbe } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('okc:discover', extra ?? ''),
   pairBridge: (code: string) => ipcRenderer.invoke('bridge:pair', code),
   unpairBridge: () => ipcRenderer.invoke('bridge:unpair'),
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('settings:autostart', enabled),

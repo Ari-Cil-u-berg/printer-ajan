@@ -1,7 +1,15 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { OkcConfig, OkcHealth, OkcSaleRequest, OkcSaleResult } from '../../shared/types';
+import { hostname } from 'node:os';
+import { createHash } from 'node:crypto';
+import type {
+  OkcConfig,
+  OkcHealth,
+  OkcIdentityProbe,
+  OkcSaleRequest,
+  OkcSaleResult,
+} from '../../shared/types';
 import { atomicWrite } from '../fsutil';
 import { log } from '../logger';
 import { PcLinkClient, PcLinkError } from './pclink';
@@ -91,6 +99,9 @@ export class OkcManager extends EventEmitter {
         // Boş geçilenler istemcide varsayılana düşüyor; burada `undefined`
         // yollamak `exactOptionalPropertyTypes` altında "alan var ama boş"
         // demek olurdu ve o da cihazın reddettiği durum.
+        // Keşifle bulunmuşsa cihazın kabul ettiği kimlik; yoksa istemci VKN'ye
+        // düşüyor (`identityHeaders`).
+        ...(this.config.hardwareId ? { hardwareId: this.config.hardwareId } : {}),
         ...(this.config.softwareId ? { softwareId: this.config.softwareId } : {}),
         ...(this.config.serialNo ? { serialNo: this.config.serialNo } : {}),
       });
@@ -236,6 +247,104 @@ export class OkcManager extends EventEmitter {
       });
     }
     this.emit('changed');
+  }
+
+  // --- kimlik keşfi -------------------------------------------------------
+
+  /**
+   * `X-HardwareId`'yi TAHMİN ETMEYİ BIRAKIP CİHAZA SORAR.
+   *
+   * Bu başlığın ne taşıması gerektiği hiçbir dokümanda yazmıyor ve üç ayrı
+   * tahmin sahada çürüdü: makine adından türetilmiş etiket, ham hâli, kafenin
+   * VKN'si. Cihaz üçüne de `"eşleşmiyor"` dedi — çünkü değeri cihaz KAYDEDİYOR
+   * ve karşılaştırıyor.
+   *
+   * En pahalı hâli VKN DEĞİŞİKLİĞİ: kurulum eskiden çalışıyorsa cihazda
+   * kayıtlı olan ESKİ numaradır ve yeni numarayı göndermek her çağrıyı
+   * düşürür. Kurulumu yapan kişi "yeni VKN'yi girdim" der, haklıdır, ve yine
+   * de çalışmaz.
+   *
+   * Bu yüzden ölçüyoruz: her aday için `GET /v1/status` çağrılıyor ve ilk
+   * kabul edilen kalıcı olarak yazılıyor. Adaylardan hiçbiri geçmezse cihazın
+   * her aday için ne dediği geri dönüyor — bakılacak yer orası.
+   *
+   * `extra`: kurulumcunun bildiği ama ajanın bilemeyeceği değerler (eski VKN
+   * gibi). Kalıcı ayara değil, yalnızca aday listesine giriyor.
+   */
+  async discoverIdentity(extra: string[] = []): Promise<OkcIdentityProbe> {
+    if (!this.client || !this.config) {
+      return { accepted: null, tried: [] };
+    }
+
+    const machine = hostname();
+    const candidates: { value: string; label: string }[] = [];
+    const add = (value: string | undefined, label: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) return;
+      if (candidates.some((c) => c.value === trimmed)) return;
+      candidates.push({ value: trimmed, label });
+    };
+
+    for (const value of extra) add(value, 'elle verilen');
+    add(this.config.hardwareId, 'ayardaki değer');
+    add(digitsOf(this.config.softwareId) ?? undefined, 'kafenin VKN’si');
+    add(this.config.serialNo, 'cihaz sicili');
+    /**
+     * ESKİ SÜRÜMLERİN GÖNDERDİĞİ DEĞER.
+     *
+     * v0.3.12'ye kadar `X-HardwareId` makine adından türetiliyordu: 8 karakterden
+     * kısaysa sha256 ekiyle uzatılır, uzunsa 20'ye kesilirdi. Cihaz ilk gördüğü
+     * değeri kaydettiyse hâlâ onu bekliyor olabilir — ve o değeri yalnızca
+     * ajan yeniden üretebilir, çünkü makine adı burada.
+     */
+    add(legacyHardwareId(machine), 'eski sürümün ürettiği değer');
+    add(machine, 'makine adı');
+
+    const tried: OkcIdentityProbe['tried'] = [];
+    let accepted: string | null = null;
+
+    for (const candidate of candidates) {
+      try {
+        const response = await this.client.withHardwareId(candidate.value).status();
+        const ok = response.httpStatus === 200;
+        tried.push({
+          candidate: candidate.value,
+          label: candidate.label,
+          ok,
+          ...(ok ? {} : { error: errorText(response.body) ?? `HTTP ${response.httpStatus}` }),
+        });
+        if (ok) {
+          accepted = candidate.value;
+          break;
+        }
+      } catch (err) {
+        tried.push({
+          candidate: candidate.value,
+          label: candidate.label,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (!accepted) {
+      log.warn('okc kimlik keşfi sonuçsuz', { tried: tried.length });
+      return { accepted: null, tried };
+    }
+
+    this.config = { ...this.config, hardwareId: accepted };
+    this.persist(this.config);
+    this.rebuild();
+    log.info('okc kimliği keşifle bulundu', { label: tried.at(-1)?.label });
+
+    // Kimlik oturunca cihazın kendi mükellef numarası da okunabiliyor: VKN
+    // değişmiş bir kurulumda asıl doğru numara odur.
+    await this.learnFromSettings();
+    void this.refreshHealth();
+
+    const result: OkcIdentityProbe = { accepted, tried };
+    const deviceTaxId = digitsOf(this.config.softwareId);
+    return deviceTaxId ? { ...result, deviceTaxId } : result;
   }
 
   // --- satış --------------------------------------------------------------
@@ -762,4 +871,18 @@ function openDocument(body: {
     (doc) => doc.documentId && doc.documentStatus && !/CLOSED|CANCEL/i.test(doc.documentStatus),
   );
   return open?.documentId?.trim() || undefined;
+}
+
+/**
+ * v0.3.12'ye kadar `X-HardwareId` olarak gönderilen değeri yeniden üretir.
+ *
+ * Makine adı 8 karakterden kısaysa kendi sha256'sıyla uzatılıyor, uzunsa 20'ye
+ * kesiliyor, `[A-Za-z0-9._-]` dışındaki karakterler ayıklanıyordu. Cihaz o
+ * değeri kaydettiyse hâlâ onu bekliyor; algoritmayı bilen tek yer burası.
+ */
+function legacyHardwareId(machine: string): string {
+  const cleaned = machine.trim().replace(/[^A-Za-z0-9._-]/g, '');
+  if (cleaned.length >= 8) return cleaned.slice(0, 20);
+  const suffix = createHash('sha256').update(machine || cleaned).digest('hex');
+  return `${cleaned}${suffix}`.slice(0, 16);
 }

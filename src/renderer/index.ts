@@ -104,6 +104,13 @@ interface UpdateStatus {
   downloadUrl?: string;
 }
 
+/** `okc:discover` sonucu — ayrıntı için `shared/types.ts`. */
+interface OkcIdentityProbe {
+  accepted: string | null;
+  tried: { candidate: string; label: string; ok: boolean; error?: string }[];
+  deviceTaxId?: string;
+}
+
 interface AgentBridge {
   getStatus(): Promise<StatusSnapshot>;
   onStatus(cb: (s: StatusSnapshot) => void): void;
@@ -119,6 +126,7 @@ interface AgentBridge {
   testOkc(): Promise<Result<OkcHealth>>;
   retryOkc(): Promise<Result<OkcSaleResult | null>>;
   cancelOkc(): Promise<Result<{ ok: boolean; error?: string }>>;
+  discoverOkcIdentity(extra?: string): Promise<Result<OkcIdentityProbe>>;
   pairBridge(code: string): Promise<Result<StatusSnapshot>>;
   unpairBridge(): Promise<Result<StatusSnapshot>>;
   setAutostart(enabled: boolean): Promise<Result<StatusSnapshot>>;
@@ -395,6 +403,45 @@ $('okcSaveBtn').addEventListener('click', async () => {
     msg,
     h.ok ? 'Yazarkasa bağlandı.' : h.error ?? 'Yazarkasaya ulaşılamadı.',
     h.ok ? 'ok' : 'bad',
+  );
+});
+
+/**
+ * KİMLİK KEŞFİ — tahmin etmeyi bırakıp cihaza soruyoruz.
+ *
+ * `X-HardwareId`'nin ne olması gerektiği hiçbir dokümanda yazmıyor ve üç ayrı
+ * tahmin sahada çürüdü. Sonuç listesi tam da bu yüzden gösteriliyor: hiçbiri
+ * tutmadığında cihazın her aday için ne dediği, bakılacak tek yer.
+ */
+$('okcDiscoverBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('okcDiscoverBtn');
+  btn.disabled = true;
+  setMsg($('okcMsg'), 'Cihazın kabul ettiği kimlik aranıyor…');
+  const res = await bridge.discoverOkcIdentity(
+    $<HTMLInputElement>('okcLegacyTaxId').value.trim(),
+  );
+  btn.disabled = false;
+  if (!res.ok) return setMsg($('okcMsg'), res.error, 'bad');
+
+  const { accepted, tried, deviceTaxId } = res.data;
+  if (accepted) {
+    const label = tried.find((t) => t.ok)?.label ?? '';
+    setMsg(
+      $('okcMsg'),
+      `Cihaz kimliği bulundu (${label}) ve kaydedildi.` +
+        (deviceTaxId ? ` Cihazın VKN'si: ${deviceTaxId}.` : ''),
+      'ok',
+    );
+    return;
+  }
+
+  // Denenenleri cihazın kendi cümleleriyle gösteriyoruz: "hiçbiri olmadı"
+  // tek başına, sıradaki adımı kimseye söylemiyor.
+  const lines = tried.map((t) => `• ${t.label} (${t.candidate}): ${t.error ?? 'reddedildi'}`);
+  setMsg(
+    $('okcMsg'),
+    `Hiçbir aday kabul edilmedi.\n${lines.join('\n')}`,
+    'bad',
   );
 });
 

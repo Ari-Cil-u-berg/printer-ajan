@@ -44,7 +44,24 @@ export interface PcLinkTarget {
    */
   fingerprint?: string;
   /**
-   * KAFENİN VKN'Sİ — `X-SoftwareId` VE `X-HardwareId`'nin İKİSİ DE BU.
+   * `X-HardwareId` — CİHAZIN KABUL ETTİĞİ değer, KEŞİFLE bulunur.
+   *
+   * Üç kez tahmin ettik, üçü de yanlıştı: makine adından türetilmiş bir etiket,
+   * sonra kırpılmamış hâli, sonra VKN. Cihaz üçüne de `"eşleşmiyor"` dedi.
+   * Ortak hata tahmin etmekti — bu başlık cihazda KAYITLI bir değerle
+   * karşılaştırılıyor ve o değerin ne olduğu hiçbir dokümanda yazmıyor.
+   *
+   * Bu yüzden artık soruyoruz: `discoverIdentity` adayları tek tek cihaza
+   * deneyip hangisinin kabul edildiğini ölçüyor (`okc.ts`). Buraya yazılan,
+   * o ölçümün sonucu. Boşsa VKN'ye düşülüyor — keşif çalışana kadarki en iyi
+   * tahmin, ama artık yalnızca bir başlangıç noktası.
+   *
+   * ELLE GİRİLMİYOR. Kurulum ekranındaki kutu kaldırıldı: oraya yazılan her
+   * değer cihazı kilitliyordu.
+   */
+  hardwareId?: string;
+  /**
+   * KAFENİN VKN'Sİ — `X-SoftwareId`, ve keşif olmadıysa `X-HardwareId`.
    *
    * Cihaz her iki başlıkta da kendi mükellef kaydındaki vergi numarasını
    * bekliyor; başka bir değer gelirse `"eşleşmiyor"` diyor. İki ayrı başlığın
@@ -204,12 +221,29 @@ export class PcLinkClient {
    * cihazın istediği 8–20 aralığına zaten oturur.
    */
   private identityHeaders(): Record<string, string> {
-    // TEK NUMARA, İKİ BAŞLIK. Cihaz ikisinde de kafenin VKN'sini bekliyor.
     const taxId = this.target.softwareId?.trim();
+    // Keşifle bulunmuş bir değer varsa O gider; yoksa VKN — cihazın tanıdığı
+    // tek numara ve keşif çalışana kadarki en iyi tahmin.
+    const hardwareId = this.target.hardwareId?.trim() || taxId;
     return {
-      ...(taxId ? { 'X-HardwareId': taxId, 'X-SoftwareId': taxId } : {}),
+      ...(hardwareId ? { 'X-HardwareId': hardwareId } : {}),
+      ...(taxId ? { 'X-SoftwareId': taxId } : {}),
       ...(this.target.serialNo?.trim() ? { 'X-SerialNo': this.target.serialNo.trim() } : {}),
     };
+  }
+
+  /**
+   * Aynı cihaza, BAŞKA BİR `X-HardwareId` ile bakan bir kopya.
+   *
+   * Keşif bunu kullanıyor: aday değerlerin her biri için ayrı bir istemci
+   * kurmak yerine hedefin tek alanını değiştirip aynı bağlantı kurallarını
+   * (parmak izi sabitleme, özel ağ kısıtı) koruyor.
+   */
+  withHardwareId(hardwareId: string | undefined): PcLinkClient {
+    return new PcLinkClient({
+      ...this.target,
+      ...(hardwareId ? { hardwareId } : { hardwareId: undefined }),
+    });
   }
 
   /**

@@ -522,12 +522,13 @@ test('X-HardwareId ve X-SoftwareId aynı VKN’yi taşır', { skip: !tls }, asyn
 });
 
 /**
- * Eski ayar dosyalarında kalan `hardwareId` OKUNMUYOR.
+ * KEŞİFLE BULUNMUŞ KİMLİK SATIŞTA DA KULLANILIR.
  *
- * Sahadaki kurulumlarda o kutu dolu ve içindeki değer cihazın tanımadığı bir
- * ad — okunmaya devam etseydi güncelleme hiçbir şeyi düzeltmezdi.
+ * `discoverIdentity` cihazın kabul ettiği değeri ayara yazıyor; satış yolu onu
+ * okumazsa keşif hiçbir işe yaramaz — cihaz belge açma çağrısını reddeder ve
+ * arıza yine "yazarkasa çalışmıyor" diye görünür.
  */
-test('eski hardwareId ayarı yok sayılır', { skip: !tls }, async () => {
+test('keşfedilen kimlik satış çağrılarında gider', { skip: !tls }, async () => {
   const seen = [];
   const server = https.createServer({ key: tls.key, cert: tls.cert }, (req, res) => {
     seen.push(req.headers['x-hardwareid']);
@@ -547,8 +548,8 @@ test('eski hardwareId ayarı yok sayılır', { skip: !tls }, async () => {
         port,
         softwareId: '6310077423',
         serialNo: 'FU00031401',
-        // Güncellemeden önce yazılmış, cihazın tanımadığı ad.
-        hardwareId: 'kasa-1-abc123',
+        // VKN değişmeden önce cihazda kayıtlı kalan numara.
+        hardwareId: '1234567890',
       },
       () => {},
     );
@@ -556,7 +557,7 @@ test('eski hardwareId ayarı yok sayılır', { skip: !tls }, async () => {
     const result = await okc.sell({ saleId: 's25', document });
 
     assert.equal(result.status, 'APPROVED');
-    for (const value of seen) assert.equal(value, '6310077423');
+    for (const value of seen) assert.equal(value, '1234567890');
   } finally {
     server.close();
   }

@@ -209,7 +209,15 @@ export interface OkcConfig {
    * isteği de reddediyor — bkz. `pclink.ts`.
    */
   /**
-   * `hardwareId` KALDIRILDI (v0.3.15).
+   * `X-HardwareId` — CİHAZIN KABUL ETTİĞİ değer, KEŞİFLE bulunur.
+   *
+   * Elle GİRİLMEZ: kurulum ekranındaki kutu kaldırıldı, çünkü oraya yazılan
+   * her tahmin cihazı kilitliyordu. Buraya yalnızca `discoverIdentity`'nin
+   * ölçtüğü — cihazın gerçekten kabul ettiği — değer yazılır.
+   */
+  hardwareId?: string;
+  /**
+   * Eski `hardwareId` kutusu KALDIRILDI (v0.3.15).
    *
    * Cihaz `X-HardwareId` başlığında da kafenin VKN'sini bekliyor; ayrı bir
    * kutu bırakmak, oraya yazılan her değerin cihazı kilitlemesi demekti.
@@ -251,6 +259,22 @@ export interface OkcHealth {
   pendingSale?: string;
   error?: string;
   checkedAt?: string;
+}
+
+/**
+ * Kimlik keşfinin sonucu.
+ *
+ * ÖLÇÜM, TAHMİN DEĞİL. `X-HardwareId`'nin ne olması gerektiği hiçbir dokümanda
+ * yazmıyor ve üç ayrı tahmin sahada çürüdü. Keşif, adayları tek tek cihaza
+ * sorup hangisinin kabul edildiğini buluyor; `tried` listesi cihazın her aday
+ * için ne dediğini taşıyor, çünkü hiçbiri tutmadığında bakılacak yer orası.
+ */
+export interface OkcIdentityProbe {
+  /** Cihazın kabul ettiği değer. `null` = hiçbiri geçmedi. */
+  accepted: string | null;
+  tried: { candidate: string; label: string; ok: boolean; error?: string }[];
+  /** Keşif sırasında cihazın ayarlarından okunabilen mükellef VKN'si. */
+  deviceTaxId?: string;
 }
 
 /** Backend'in gönderdiği satış emri. Belge backend'de kurulur, ajan taşır. */

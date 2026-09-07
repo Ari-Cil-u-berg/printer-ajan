@@ -177,6 +177,15 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
         // numara yazdıysa onunki kazanır: cihazdan okunan değer yanlışsa
         // düzeltebilmeli, doğruysa zaten aynısını yazacak.
         if (current.serialNo && !next.serialNo) next.serialNo = current.serialNo;
+        /**
+         * KEŞİFLE BULUNAN KİMLİK KORUNUR.
+         *
+         * `hardwareId` kurulum ekranından gelmiyor (elle girilen her değer
+         * cihazı kilitliyordu) — yalnızca `discoverIdentity` yazıyor. Ayar
+         * kaydedilirken düşseydi, kurulumcunun adresi güncellemesi çalışan bir
+         * bağlantıyı bozardı.
+         */
+        if (current.hardwareId) next.hardwareId = current.hardwareId;
       }
       agent.setOkc(next);
       await agent.okc.refreshHealth();
@@ -185,6 +194,21 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
   );
 
   ipcMain.handle('okc:test', () => guard(() => agent.okc.refreshHealth()));
+
+  /**
+   * Kimlik keşfi — `X-HardwareId`'yi cihaza sorarak bulur.
+   *
+   * `extra`: kurulumcunun bildiği ama ajanın bilemeyeceği aday (VKN değişmiş
+   * bir kurulumda ESKİ numara gibi). Kalıcı ayara yazılmıyor; yalnızca
+   * denenecek listeye giriyor.
+   */
+  ipcMain.handle('okc:discover', (_e, extra: unknown) =>
+    guard(() =>
+      agent.okc.discoverIdentity(
+        typeof extra === 'string' && extra.trim() ? [extra.trim()] : [],
+      ),
+    ),
+  );
 
   // --- ödeme köprüsü ------------------------------------------------------
 

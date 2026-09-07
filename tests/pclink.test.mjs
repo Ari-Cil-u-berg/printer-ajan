@@ -361,13 +361,13 @@ test('kimlik başlıkları olduğu gibi gider — kesilmez, uzatılmaz, ayıklan
 });
 
 /**
- * AYRI BİR KASA KİMLİĞİ ARTIK YOK.
+ * KEŞİFLE BULUNAN KİMLİK VKN'Yİ EZER.
  *
- * Kurulum ekranındaki kutuya yazılan her değer cihazı kilitliyordu; eski ayar
- * dosyalarında kalan alan da okunmamalı, yoksa güncelleme tam da bu duruma
- * düşmüş kurulumlarda hiçbir şeyi düzeltmez.
+ * `X-HardwareId` cihazda kayıtlı bir değerle karşılaştırılıyor ve o değerin ne
+ * olduğu hiçbir dokümanda yazmıyor — üç tahmin de sahada çürüdü. VKN yalnızca
+ * keşif çalışana kadarki başlangıç noktası; ölçülmüş bir değer varsa o gider.
  */
-test('eski hardwareId ayarı okunmaz', { skip: !tls }, async () => {
+test('keşifle bulunan kimlik VKN yerine gider', { skip: !tls }, async () => {
   let headers = null;
   await withDevice(
     (req, res) => {
@@ -379,13 +379,42 @@ test('eski hardwareId ayarı okunmaz', { skip: !tls }, async () => {
         host: '127.0.0.1',
         port,
         softwareId: '6310077423',
-        // Tipte yok; eski bir ayar dosyasından gelmiş gibi.
-        hardwareId: 'HGN-0042',
+        hardwareId: '1234567890', // keşifte kabul edilen eski numara
       });
       await client.status();
     },
   );
-  assert.equal(headers['x-hardwareid'], '6310077423');
+  assert.equal(headers['x-hardwareid'], '1234567890');
+  assert.equal(headers['x-softwareid'], '6310077423');
+});
+
+/** `withHardwareId` aynı hedefi başka bir kimlikle dener — keşfin motoru. */
+test('withHardwareId yalnızca kimliği değiştirir', { skip: !tls }, async () => {
+  const seen = [];
+  await withDevice(
+    (req, res) => {
+      seen.push({
+        hardwareId: req.headers['x-hardwareid'],
+        serialNo: req.headers['x-serialno'],
+      });
+      json(res, 200, { status: 'SUCCESS', data: { state: 'IDLE' } });
+    },
+    async (port) => {
+      const client = new PcLinkClient({
+        host: '127.0.0.1',
+        port,
+        softwareId: '6310077423',
+        serialNo: 'FU00001234',
+      });
+      await client.withHardwareId('aday-1').status();
+      await client.status();
+    },
+  );
+  assert.equal(seen[0].hardwareId, 'aday-1');
+  assert.equal(seen[0].serialNo, 'FU00001234');
+  // Kopya, aslını DEĞİŞTİRMEZ: keşif sırasında denenen bir aday, keşif
+  // başarısız olursa ayarda iz bırakmamalı.
+  assert.equal(seen[1].hardwareId, '6310077423');
 });
 
 /**
