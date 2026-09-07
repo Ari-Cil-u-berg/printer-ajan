@@ -208,7 +208,13 @@ export interface OkcConfig {
    * Doküman bu başlığı opsiyonel gösteriyor ama saha cihazı başlıksız her
    * isteği de reddediyor — bkz. `pclink.ts`.
    */
-  hardwareId?: string;
+  /**
+   * `hardwareId` KALDIRILDI (v0.3.15).
+   *
+   * Cihaz `X-HardwareId` başlığında da kafenin VKN'sini bekliyor; ayrı bir
+   * kutu bırakmak, oraya yazılan her değerin cihazı kilitlemesi demekti.
+   * Eski ayar dosyalarında kalan alan okunmuyor.
+   */
   /**
    * `X-SoftwareId` — PC Link uygulamasına girilen VKN. Zorunlu ve birebir
    * eşleşmeli; boşsa istek hiç gönderilmiyor (bkz. `okc.ts` sağlık kontrolü).

@@ -44,37 +44,21 @@ export interface PcLinkTarget {
    */
   fingerprint?: string;
   /**
-   * `X-HardwareId` — cihazda KAYITLI olan kimlik. Birebir eşleşmeli.
+   * KAFENİN VKN'Sİ — `X-SoftwareId` VE `X-HardwareId`'nin İKİSİ DE BU.
    *
-   * ZORUNLU, dokümanın aksine. OpenAPI tanımı bu üç başlığı da
-   * `required: false` işaretliyor; saha cihazı ise başlıksız her isteği
-   * `ERR_UNAUTHORIZED — "X-HardwareId değeri boş olamaz"` ile reddediyor.
-   * Dokümana güvenip göndermemek, `GET /v1/status` dahil HİÇBİR çağrının
-   * çalışmaması demekti — sağlık göstergesi kırmızı, sebebi görünmez.
+   * Cihaz her iki başlıkta da kendi mükellef kaydındaki vergi numarasını
+   * bekliyor; başka bir değer gelirse `"eşleşmiyor"` diyor. İki ayrı başlığın
+   * iki ayrı kimlik taşıdığını sandık ve aynı yanılgıya iki kez düştük:
+   * `X-SoftwareId` için "10 karakterden uzun olamaz", `X-HardwareId` için
+   * "8 karakterden kısa, 20 karakterden uzun olamaz" — ikisi de biçim kuralı
+   * değil, beklenen numaranın kendi uzunluğuymuş.
    *
-   * BİZİM SEÇTİĞİMİZ BİR AD DEĞİL. Uzunca bunun serbest bir etiket olduğunu,
-   * cihazın yalnızca biçimine baktığını sandık ve kısa olanı uzatıp uzun olanı
-   * kestik. Cihaz `"x-hardwareid eşleşmiyor"` diyerek bunu çürüttü: başlık,
-   * `X-SoftwareId` gibi, kayıtlı bir değerle KARŞILAŞTIRILIYOR. "8 karakterden
-   * kısa, 20 karakterden uzun olamaz" kuralı bir biçim kısıtı değil, beklenen
-   * değerin kendi uzunluk aralığıymış — tıpkı `X-SoftwareId`'de on hanenin bir
-   * VKN'nin uzunluğu olması gibi. Aynı yanılgıya iki başlıkta iki kez düştük.
+   * Bu yüzden AYRI BİR `hardwareId` ALANI YOK. Kurulum ekranında ayrı bir kutu
+   * bırakmak, oraya yazılan her değerin cihazı kilitlemesi demekti — sahada
+   * tam olarak bu oldu.
    *
-   * Sonucu: bu değer de NORMALLEŞTİRİLMEZ. Boşsa VKN'ye düşer (bkz.
-   * `identityHeaders`), makine adına değil.
-   */
-  hardwareId?: string;
-  /**
-   * `X-SoftwareId` — PC LINK UYGULAMASINA GİRİLEN VKN.
-   *
-   * Uydurulmuş bir etiket DEĞİL: cihaz, PC Link ilk açıldığında yazılan vergi
-   * numarasını bekliyor ve farklı bir değer gelirse `"x-softwareid
-   * eşleşmiyor"` diyor. Bunu sahada öğrendik — önce uzunluk kuralını
-   * ("10 karakterden uzun olamaz") bir biçim kısıtı sandık, oysa on hane bir
-   * VKN'nin kendi uzunluğuymuş.
-   *
-   * Sonucu: bu değer NORMALLEŞTİRİLMEZ. Kırpmak ya da uzatmak, eşleşmesi
-   * gereken bir numarayı bozmak demek.
+   * Değer NORMALLEŞTİRİLMEZ. Kırpmak ya da uzatmak, eşleşmesi gereken bir
+   * numarayı bozmak demek.
    */
   softwareId?: string;
   /**
@@ -220,11 +204,10 @@ export class PcLinkClient {
    * cihazın istediği 8–20 aralığına zaten oturur.
    */
   private identityHeaders(): Record<string, string> {
-    const softwareId = this.target.softwareId?.trim();
-    const hardwareId = this.target.hardwareId?.trim() || softwareId;
+    // TEK NUMARA, İKİ BAŞLIK. Cihaz ikisinde de kafenin VKN'sini bekliyor.
+    const taxId = this.target.softwareId?.trim();
     return {
-      ...(hardwareId ? { 'X-HardwareId': hardwareId } : {}),
-      ...(softwareId ? { 'X-SoftwareId': softwareId } : {}),
+      ...(taxId ? { 'X-HardwareId': taxId, 'X-SoftwareId': taxId } : {}),
       ...(this.target.serialNo?.trim() ? { 'X-SerialNo': this.target.serialNo.trim() } : {}),
     };
   }

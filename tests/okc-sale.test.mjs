@@ -484,3 +484,80 @@ test('VKN cihazın ayarlarından okunur ve saklanır', { skip: !tls }, async () 
     server.close();
   }
 });
+
+/**
+ * TEK NUMARA, İKİ BAŞLIK.
+ *
+ * Cihaz `X-HardwareId`'de de kafenin VKN'sini bekliyor. Uzunca bunun bizim
+ * seçtiğimiz bir makine adı olduğunu sandık; kurulum ekranındaki ayrı kutuya
+ * yazılan her değer cihazı kilitledi. Kutu kalktı, başlık VKN'den türüyor.
+ */
+test('X-HardwareId ve X-SoftwareId aynı VKN’yi taşır', { skip: !tls }, async () => {
+  const seen = [];
+  await withDevice(
+    (req, res) => {
+      seen.push({
+        hardwareId: req.headers['x-hardwareid'],
+        softwareId: req.headers['x-softwareid'],
+        serialNo: req.headers['x-serialno'],
+      });
+      if (req.method === 'POST' && req.url === '/v1/documents') {
+        return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-24' } });
+      }
+      return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0024' } });
+    },
+    async (okc) => {
+      const result = await okc.sell({ saleId: 's24', document });
+
+      assert.equal(result.status, 'APPROVED');
+      assert.ok(seen.length > 0, 'cihaza gidilmiş olmalı');
+      for (const headers of seen) {
+        assert.equal(headers.hardwareId, '6310077423');
+        assert.equal(headers.softwareId, '6310077423');
+        // Sicil ayrı bir alan ve kimlik başlıklarına karışmamalı.
+        assert.equal(headers.serialNo, 'FU00031401');
+      }
+    },
+  );
+});
+
+/**
+ * Eski ayar dosyalarında kalan `hardwareId` OKUNMUYOR.
+ *
+ * Sahadaki kurulumlarda o kutu dolu ve içindeki değer cihazın tanımadığı bir
+ * ad — okunmaya devam etseydi güncelleme hiçbir şeyi düzeltmezdi.
+ */
+test('eski hardwareId ayarı yok sayılır', { skip: !tls }, async () => {
+  const seen = [];
+  const server = https.createServer({ key: tls.key, cert: tls.cert }, (req, res) => {
+    seen.push(req.headers['x-hardwareid']);
+    if (req.method === 'POST' && req.url === '/v1/documents') {
+      return json(res, 200, { status: 'SUCCESS', data: { documentId: 'doc-25' } });
+    }
+    return json(res, 200, { status: 'SUCCESS', data: { receiptNo: '0042_0025' } });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-data-'));
+  try {
+    const okc = new OkcManager(
+      dataDir,
+      {
+        host: '127.0.0.1',
+        port,
+        softwareId: '6310077423',
+        serialNo: 'FU00031401',
+        // Güncellemeden önce yazılmış, cihazın tanımadığı ad.
+        hardwareId: 'kasa-1-abc123',
+      },
+      () => {},
+    );
+
+    const result = await okc.sell({ saleId: 's25', document });
+
+    assert.equal(result.status, 'APPROVED');
+    for (const value of seen) assert.equal(value, '6310077423');
+  } finally {
+    server.close();
+  }
+});

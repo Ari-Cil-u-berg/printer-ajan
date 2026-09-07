@@ -105,7 +105,6 @@ function assertOkc(value: unknown): OkcConfig {
   if (softwareId && !/^\d{10,11}$/.test(softwareId)) {
     throw new Error('Yazılım kimliği 10 haneli VKN ya da 11 haneli TCKN olmalı');
   }
-  const hardwareId = text(c.hardwareId);
   const serialNo = text(c.serialNo);
 
   return {
@@ -117,7 +116,6 @@ function assertOkc(value: unknown): OkcConfig {
     // kimlik bekliyor. Uzunluk düzeltmesi istemcide (`normalizeId`); burada
     // yalnızca kırpıp saklıyoruz, çünkü kuralı bilen taraf orası.
     ...(softwareId ? { softwareId } : {}),
-    ...(hardwareId ? { hardwareId } : {}),
     // ELLE DE GİRİLEBİLİR, yalnızca cihazdan öğrenilmez. Öğrenme
     // `GET /v1/settings`'e bağlı ve o çağrının kendisi de kimlik başlıkları
     // istiyor; başarısız olduğunda `X-SerialNo` hiç gitmiyor ve cihaz satışı

@@ -91,7 +91,6 @@ export class OkcManager extends EventEmitter {
         // Boş geçilenler istemcide varsayılana düşüyor; burada `undefined`
         // yollamak `exactOptionalPropertyTypes` altında "alan var ama boş"
         // demek olurdu ve o da cihazın reddettiği durum.
-        ...(this.config.hardwareId ? { hardwareId: this.config.hardwareId } : {}),
         ...(this.config.softwareId ? { softwareId: this.config.softwareId } : {}),
         ...(this.config.serialNo ? { serialNo: this.config.serialNo } : {}),
       });

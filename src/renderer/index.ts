@@ -32,8 +32,6 @@ interface OkcConfig {
   label?: string;
   /** `X-SoftwareId` — PC Link'e girilen VKN. Birebir eşleşmeli. */
   softwareId?: string;
-  /** `X-HardwareId` — cihazda kayıtlı kimlik. Boşsa VKN kullanılır. */
-  hardwareId?: string;
   /** `X-SerialNo` — boşsa cihazdan öğrenilir, elle de girilebilir. */
   serialNo?: string;
 }
@@ -311,7 +309,6 @@ function renderOkc(s: StatusSnapshot): void {
   const portInput = $<HTMLInputElement>('okcPort');
   const labelInput = $<HTMLInputElement>('okcLabel');
   const softwareInput = $<HTMLInputElement>('okcSoftwareId');
-  const hardwareInput = $<HTMLInputElement>('okcHardwareId');
   const serialInput = $<HTMLInputElement>('okcSerialNo');
 
   // Yazarken üstüne yazma — kullanıcı IP girerken durum yenilenirse alan
@@ -320,7 +317,6 @@ function renderOkc(s: StatusSnapshot): void {
   if (document.activeElement !== portInput) portInput.value = String(s.okc?.port ?? 4443);
   if (document.activeElement !== labelInput) labelInput.value = s.okc?.label ?? '';
   if (document.activeElement !== softwareInput) softwareInput.value = s.okc?.softwareId ?? '';
-  if (document.activeElement !== hardwareInput) hardwareInput.value = s.okc?.hardwareId ?? '';
   // Cihazdan okunmuş sicil de burada görünür: kurulumcu markanın verdiği
   // numarayla karşılaştırabilmeli, "eşleşmiyor" hatası tam bu farkı anlatıyor.
   if (document.activeElement !== serialInput) serialInput.value = s.okc?.serialNo ?? '';
@@ -389,7 +385,6 @@ $('okcSaveBtn').addEventListener('click', async () => {
     port: Number($<HTMLInputElement>('okcPort').value) || 4443,
     label: $<HTMLInputElement>('okcLabel').value.trim(),
     softwareId: $<HTMLInputElement>('okcSoftwareId').value.trim(),
-    hardwareId: $<HTMLInputElement>('okcHardwareId').value.trim(),
     serialNo: $<HTMLInputElement>('okcSerialNo').value.trim(),
   });
   btn.disabled = false;
