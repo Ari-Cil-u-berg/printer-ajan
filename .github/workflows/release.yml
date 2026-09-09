@@ -93,8 +93,19 @@ jobs:
           set -euo pipefail
           app="$(find release -maxdepth 2 -name '*.app' -print -quit)"
           test -n "$app" || { echo "no .app in release/"; exit 1; }
-          codesign -dvv "$app" 2>&1 | tee /dev/stderr | grep -q 'Signature=adhoc' \
-            || { echo "expected an ad-hoc signature — refusing to ship a half-signed build"; exit 1; }
+          # ÖNCE YAKALA, SONRA ARA — boru hattı içinde `grep -q` KULLANMA.
+          #
+          # Bu adım iki sürümde ard arda kırmızıya döndü ve imzada bir sorun
+          # yoktu: `grep -q` ilk eşleşmede çıkıyor, `tee` yazacak yer bulamayıp
+          # SIGPIPE alıyor, `pipefail` de bunu hatanın kendisi sayıyor. Yani
+          # kontrol, ARADIĞINI BULDUĞU İÇİN başarısız oluyordu — ve mac DMG'si
+          # sürüme hiç eklenmiyordu.
+          signature="$(codesign -dvv "$app" 2>&1)"
+          echo "$signature"
+          case "$signature" in
+            *Signature=adhoc*) ;;
+            *) echo "expected an ad-hoc signature — refusing to ship a half-signed build"; exit 1 ;;
+          esac
           rm -f release/latest-mac.yml
 
       # The tag comes from package.json, not GITHUB_REF_NAME. This workflow also
