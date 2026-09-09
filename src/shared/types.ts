@@ -217,7 +217,14 @@ export interface OkcConfig {
    */
   hardwareId?: string;
   /**
-   * Eski `hardwareId` kutusu KALDIRILDI (v0.3.15).
+   * Kurulum ekranında ELLE DE GİRİLİR (v0.3.18'den beri).
+   *
+   * v0.3.15'te kaldırılmıştı: o zaman değerin ne olduğunu bilmiyorduk ve
+   * kutuya yazılan her tahmin cihazı kilitliyordu. Şimdi biliyoruz — cihazın
+   * etiketindeki `Remark` kodu (ör. `S1P-F225-033-50`), 8–20 karakter. Bilen
+   * kurulumcunun keşfi beklemesi gereksiz; bilmeyen boş bırakıp keşfe basıyor.
+   *
+   * ESKİ YORUM.
    *
    * Cihaz `X-HardwareId` başlığında da kafenin VKN'sini bekliyor; ayrı bir
    * kutu bırakmak, oraya yazılan her değerin cihazı kilitlemesi demekti.

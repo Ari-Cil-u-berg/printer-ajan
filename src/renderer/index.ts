@@ -34,6 +34,8 @@ interface OkcConfig {
   softwareId?: string;
   /** `X-SerialNo` — boşsa cihazdan öğrenilir, elle de girilebilir. */
   serialNo?: string;
+  /** `X-HardwareId` — cihazın etiketindeki Remark kodu. */
+  hardwareId?: string;
 }
 interface OkcHealth {
   configured: boolean;
@@ -318,6 +320,7 @@ function renderOkc(s: StatusSnapshot): void {
   const labelInput = $<HTMLInputElement>('okcLabel');
   const softwareInput = $<HTMLInputElement>('okcSoftwareId');
   const serialInput = $<HTMLInputElement>('okcSerialNo');
+  const hardwareInput = $<HTMLInputElement>('okcHardwareId');
 
   // Yazarken üstüne yazma — kullanıcı IP girerken durum yenilenirse alan
   // sıfırlanmamalı.
@@ -328,6 +331,7 @@ function renderOkc(s: StatusSnapshot): void {
   // Cihazdan okunmuş sicil de burada görünür: kurulumcu markanın verdiği
   // numarayla karşılaştırabilmeli, "eşleşmiyor" hatası tam bu farkı anlatıyor.
   if (document.activeElement !== serialInput) serialInput.value = s.okc?.serialNo ?? '';
+  if (document.activeElement !== hardwareInput) hardwareInput.value = s.okc?.hardwareId ?? '';
 
   const h = s.okcHealth;
   const stateEl = $('okcState');
@@ -394,6 +398,7 @@ $('okcSaveBtn').addEventListener('click', async () => {
     label: $<HTMLInputElement>('okcLabel').value.trim(),
     softwareId: $<HTMLInputElement>('okcSoftwareId').value.trim(),
     serialNo: $<HTMLInputElement>('okcSerialNo').value.trim(),
+    hardwareId: $<HTMLInputElement>('okcHardwareId').value.trim(),
   });
   btn.disabled = false;
 

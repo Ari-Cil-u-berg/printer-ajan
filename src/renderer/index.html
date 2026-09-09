@@ -177,6 +177,8 @@
                 <dd><input id="okcSoftwareId" type="text" placeholder="6310077423 — işletme kaydından gelir" inputmode="numeric" autocomplete="off" /></dd>
                 <dt>Sicil no</dt>
                 <dd><input id="okcSerialNo" type="text" placeholder="FU00031401 — boşsa cihazdan okunur" autocomplete="off" /></dd>
+                <dt>Cihaz kimliği (Remark)</dt>
+                <dd><input id="okcHardwareId" type="text" placeholder="S1P-F225-033-50 — cihazın etiketinde yazar" autocomplete="off" /></dd>
               </dl>
               <p class="help">
                 <b>"eşleşmiyor" hatası alıyorsanız</b> <code>Kimliği keşfet</code>'e basın: ajan,
@@ -198,6 +200,11 @@
                 okunup buraya yazılır.
                 <b>Sicil no</b> (<code>X-SerialNo</code>) boş bırakılırsa cihazdan okunur; cihaz
                 "sicil doğrulanamadı" diyorsa markanın verdiği numarayı elle yazın.
+                <b>Cihaz kimliği</b> (<code>X-HardwareId</code>) cihazın etiketindeki
+                <b>Remark</b> kodudur (ör. <code>S1P-F225-033-50</code>). Cihaz bu değeri
+                8–20 karakter aralığında bekliyor ve tutmadığında
+                "x-hardwareid eşleşmiyor" diyerek her isteği reddediyor. Bilmiyorsanız boş
+                bırakıp <code>Kimliği keşfet</code>'e basın — bulunan değer buraya yazılır.
               </p>
               <div class="row">
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>

@@ -107,14 +107,26 @@ function assertOkc(value: unknown): OkcConfig {
   }
   const serialNo = text(c.serialNo);
 
+  /**
+   * `X-HardwareId` — cihazın etiketindeki Remark kodu.
+   *
+   * NORMALLEŞTİRİLMEZ: cihazda kayıtlı bir değerle karşılaştırılıyor ve
+   * kırpmak, uzatmak ya da karakter ayıklamak eşleşmeyi garanti bozar. Tek
+   * kontrol cihazın kendi söylediği aralık — o aralığın dışındaki bir değer
+   * zaten reddedilecek, hatayı burada söylemek sahada aramaktan ucuz.
+   */
+  const hardwareId = text(c.hardwareId);
+  if (hardwareId && (hardwareId.length < 8 || hardwareId.length > 20)) {
+    throw new Error('Cihaz kimliği 8–20 karakter olmalı (cihazın etiketindeki Remark kodu)');
+  }
+
   return {
     host,
     port,
     ...(label ? { label } : {}),
-    // Kimlik başlıkları: cihaz bunları ZORUNLU tutuyor ve `X-SoftwareId`'yi
-    // uydurulmuş bir değer olarak kabul etmiyor — Hugin tarafından verilen bir
-    // kimlik bekliyor. Uzunluk düzeltmesi istemcide (`normalizeId`); burada
-    // yalnızca kırpıp saklıyoruz, çünkü kuralı bilen taraf orası.
+    // Kimlik başlıkları CİHAZDA KAYITLI değerlerle karşılaştırılıyor: hiçbiri
+    // bizim seçtiğimiz bir etiket değil ve hiçbiri normalleştirilmiyor.
+    // Kırpmak ya da uzatmak, eşleşmesi gereken bir değeri bozmaktır.
     ...(softwareId ? { softwareId } : {}),
     // ELLE DE GİRİLEBİLİR, yalnızca cihazdan öğrenilmez. Öğrenme
     // `GET /v1/settings`'e bağlı ve o çağrının kendisi de kimlik başlıkları
@@ -122,6 +134,7 @@ function assertOkc(value: unknown): OkcConfig {
     // "sicil doğrulanamadı" ile reddediyor. Kurulumcunun elinde numara varsa
     // (markadan, cihazın etiketinden) o kısır döngüyü kırabilmeli.
     ...(serialNo ? { serialNo } : {}),
+    ...(hardwareId ? { hardwareId } : {}),
     // Parmak izi KULLANICIDAN GELMEZ: cihazdan öğrenilir. Dışarıdan kabul
     // etmek, sabitlemenin anlamını ortadan kaldırırdı.
     ...(c.fingerprint && typeof c.fingerprint === 'string' ? { fingerprint: c.fingerprint } : {}),
@@ -178,14 +191,14 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
         // düzeltebilmeli, doğruysa zaten aynısını yazacak.
         if (current.serialNo && !next.serialNo) next.serialNo = current.serialNo;
         /**
-         * KEŞİFLE BULUNAN KİMLİK KORUNUR.
+         * FORMDA BOŞ BIRAKILDIYSA keşfin bulduğu kimlik korunur — sicil
+         * numarasıyla aynı kural.
          *
-         * `hardwareId` kurulum ekranından gelmiyor (elle girilen her değer
-         * cihazı kilitliyordu) — yalnızca `discoverIdentity` yazıyor. Ayar
-         * kaydedilirken düşseydi, kurulumcunun adresi güncellemesi çalışan bir
-         * bağlantıyı bozardı.
+         * Kullanıcı bir değer yazdıysa ONUNKİ kazanıyor: cihazın etiketindeki
+         * Remark kodunu okuyan kişi, keşfin bulduğundan daha iyi biliyor. Ters
+         * sıra, girilen değeri sessizce yok saymak olurdu.
          */
-        if (current.hardwareId) next.hardwareId = current.hardwareId;
+        if (current.hardwareId && !next.hardwareId) next.hardwareId = current.hardwareId;
       }
       agent.setOkc(next);
       await agent.okc.refreshHealth();
