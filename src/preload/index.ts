@@ -38,6 +38,16 @@ const api = {
     extra?: string,
   ): Promise<{ ok: true; data: OkcIdentityProbe } | { ok: false; error: string }> =>
     ipcRenderer.invoke('okc:discover', extra ?? ''),
+  /**
+   * Bu bilgisayarın MAC adresleri — `X-HardwareId` kutusundaki düğme için.
+   *
+   * Cihaza hiç dokunmuyor: makinenin kendi ağ arayüzlerini okuyor. Cihaz
+   * kapalıyken de çalışması bilerek — keşifin çalışamadığı, kurulumun da tam
+   * olarak tıkandığı an orası.
+   */
+  localHardwareIds: (): Promise<
+    { ok: true; data: { value: string; bare: string; iface: string }[] } | { ok: false; error: string }
+  > => ipcRenderer.invoke('okc:localIds'),
   pairBridge: (code: string) => ipcRenderer.invoke('bridge:pair', code),
   unpairBridge: () => ipcRenderer.invoke('bridge:unpair'),
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('settings:autostart', enabled),

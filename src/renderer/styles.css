@@ -270,6 +270,36 @@ main { padding: 20px 24px 36px; overflow-y: auto; }
 .kv dt { color: var(--muted); font-size: 13px; }
 .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
+/*
+ * KUTUNUN İÇİNDE DURAN DÜĞME.
+ *
+ * Ayrı bir satıra koymak, "bu düğme hangi kutuyu dolduruyor" sorusunu
+ * kurulumcuya sordurur. İçinde durduğunda soru sorulmuyor.
+ *
+ * Genişlik `max-width: 320px` ile sınırlı — kutunun kendisiyle aynı; sarmalayıcı
+ * daha genişse düğme kutunun dışında, boşlukta asılı kalırdı.
+ */
+.kv dd.with-action { position: relative; max-width: 320px; }
+.kv dd.with-action input { padding-right: 84px; }
+
+button.in-input {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.6;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2, #f3f4f6);
+  color: var(--muted);
+  cursor: pointer;
+}
+button.in-input:hover { color: var(--ink); }
+button.in-input:disabled { opacity: 0.5; cursor: default; }
+
 /* ── form ──────────────────────────────────────────────────────────────── */
 
 input[type="text"], input[type="number"], select {

@@ -129,6 +129,8 @@ interface AgentBridge {
   retryOkc(): Promise<Result<OkcSaleResult | null>>;
   cancelOkc(): Promise<Result<{ ok: boolean; error?: string }>>;
   discoverOkcIdentity(extra?: string): Promise<Result<OkcIdentityProbe>>;
+  /** Bu bilgisayarın MAC adresleri — `X-HardwareId` kutusundaki düğme için. */
+  localHardwareIds(): Promise<Result<{ value: string; bare: string; iface: string }[]>>;
   pairBridge(code: string): Promise<Result<StatusSnapshot>>;
   unpairBridge(): Promise<Result<StatusSnapshot>>;
   setAutostart(enabled: boolean): Promise<Result<StatusSnapshot>>;
@@ -408,6 +410,64 @@ $('okcSaveBtn').addEventListener('click', async () => {
     msg,
     h.ok ? 'Yazarkasa bağlandı.' : h.error ?? 'Yazarkasaya ulaşılamadı.',
     h.ok ? 'ok' : 'bad',
+  );
+});
+
+/**
+ * "MAC getir" — kutunun içindeki düğme.
+ *
+ * Hugin'in PC Link dokümanı `X-HardwareId`'nin ne olduğunu söylüyor: her
+ * endpointteki örnek değer bir MAC adresi (`AB:12:3F:14:EE`) ve TSM bölümü
+ * "PC Donanım, ve cihaz arasındaki eşleşme (X-Hardwareid ile)" diyor. Yani
+ * CİHAZIN değil, BU BİLGİSAYARIN kimliği.
+ *
+ * Kurulumcuya `ipconfig /all` çalıştırıp satır saydırmanın gerekçesi yok:
+ * değer makinede duruyor.
+ *
+ * BİRDEN FAZLA OLABİLİR (Ethernet + Wi-Fi) ve hangisinin kayıtlı olduğunu
+ * bilmiyoruz — düğme her basışta sıradakine geçiyor, iki yazımıyla birlikte
+ * (`AB:12:3F:14:EE` ve ayraçsız). Mesaj hangi arayüzün gösterildiğini söylüyor
+ * ki kurulumcu kabloyu takılı olanı seçebilsin.
+ *
+ * Cihaza HİÇ DOKUNMUYOR: cihaz kapalıyken de çalışıyor, ki keşifin
+ * çalışamadığı tek an orası.
+ */
+let macIndex = 0;
+$('okcMacBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('okcMacBtn');
+  const input = $<HTMLInputElement>('okcHardwareId');
+  btn.disabled = true;
+  const res = await bridge.localHardwareIds();
+  btn.disabled = false;
+
+  if (!res.ok) return setMsg($('okcMsg'), res.error, 'bad');
+
+  // Her MAC iki adaydır: noktalı ve ayraçsız. Cihazın hangisini kaydettiğini
+  // bilmediğimiz için ikisi de gezilebilir olmalı.
+  const options = res.data.flatMap((entry) => [
+    { value: entry.value, label: `${entry.iface}` },
+    { value: entry.bare, label: `${entry.iface}, ayraçsız` },
+  ]);
+
+  if (options.length === 0) {
+    return setMsg(
+      $('okcMsg'),
+      'Bu bilgisayarda okunabilir bir MAC adresi bulunamadı — kablolu/kablosuz bağlantıyı kontrol edin.',
+      'bad',
+    );
+  }
+
+  const pick = options[macIndex % options.length];
+  if (!pick) return;
+  macIndex += 1;
+  input.value = pick.value;
+
+  setMsg(
+    $('okcMsg'),
+    options.length > 1
+      ? `${pick.label}: ${pick.value} — kaydedip deneyin. Tutmazsa tekrar basın (${options.length} seçenek).`
+      : `${pick.label}: ${pick.value} — "Kaydet ve bağlan" ile deneyin.`,
+    'ok',
   );
 });
 

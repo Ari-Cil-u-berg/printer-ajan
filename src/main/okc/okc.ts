@@ -976,20 +976,42 @@ function openDocument(body: {
  * taşıyorlar hem de makineye kurulan bir yazılımla değişiyorlar — kimliği
  * değişebilen bir şeye bağlamak, sorunu ileri bir tarihe ertelemek olur.
  */
-function macCandidates(): string[] {
-  const out: string[] = [];
+export interface LocalMacAddress {
+  /** `AB:12:3F:14:EE:01` — dokümandaki yazım. */
+  value: string;
+  /** `AB123F14EE01` — cihaz ayraçsız kaydetmiş olabilir. */
+  bare: string;
+  /** Ağ arayüzünün adı: `Ethernet`, `Wi-Fi`, `en0`. */
+  iface: string;
+}
+
+/**
+ * Bu bilgisayarın MAC adresleri.
+ *
+ * DIŞA AÇIK, çünkü iki ayrı yer aynı listeyi istiyor: kimlik keşfi (adayları
+ * cihaza deniyor) ve kurulum ekranındaki kutu (kurulumcuya gösteriyor).
+ * İkincisi cihaz kapalıyken de çalışmak zorunda — keşifin çalışamadığı tek an,
+ * ve kurulumun tam da tıkandığı an.
+ */
+export function localMacAddresses(): LocalMacAddress[] {
+  const out: LocalMacAddress[] = [];
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     if (/^(lo|docker|veth|br-|vbox|vmnet|utun|awdl|llw)/i.test(name)) continue;
     for (const addr of addrs ?? []) {
       if (addr.internal) continue;
       const mac = addr.mac?.toUpperCase();
       if (!mac || mac === '00:00:00:00:00:00') continue;
-      if (!out.includes(mac)) out.push(mac);
-      const bare = mac.replace(/:/g, '');
-      if (!out.includes(bare)) out.push(bare);
+      if (out.some((entry) => entry.value === mac)) continue;
+      out.push({ value: mac, bare: mac.replace(/:/g, ''), iface: name });
     }
   }
   return out;
+}
+
+function macCandidates(): string[] {
+  // İki yazım da deneniyor: cihazın hangisini kaydettiğini bilmiyoruz ve iki
+  // fazladan istek, bir kurulum ziyaretinden ucuz.
+  return localMacAddresses().flatMap((entry) => [entry.value, entry.bare]);
 }
 
 function legacyHardwareId(machine: string): string {

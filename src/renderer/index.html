@@ -177,16 +177,28 @@
                 <dd><input id="okcSoftwareId" type="text" placeholder="6310077423 — işletme kaydından gelir" inputmode="numeric" autocomplete="off" /></dd>
                 <dt>Sicil no</dt>
                 <dd><input id="okcSerialNo" type="text" placeholder="FU00031401 — boşsa cihazdan okunur" autocomplete="off" /></dd>
-                <dt>Cihaz kimliği (Remark)</dt>
-                <dd><input id="okcHardwareId" type="text" placeholder="S1P-F225-033-50 — cihazın etiketinde yazar" autocomplete="off" /></dd>
+                <dt>Cihaz kimliği</dt>
+                <!--
+                  KUTUNUN İÇİNDEKİ DÜĞME, ayrı bir satır değil.
+
+                  Değerin ne olduğunu artık biliyoruz: bu bilgisayarın MAC
+                  adresi (Hugin PC Link dokümanında her örnek `AB:12:3F:14:EE`
+                  ve TSM bölümü "PC Donanım ... X-Hardwareid ile" diyor). Bunu
+                  kurulumcuya `ipconfig /all` çıktısından okutmanın hiçbir
+                  gerekçesi yok — makinede zaten duruyor, düğme getiriyor.
+                -->
+                <dd class="with-action">
+                  <input id="okcHardwareId" type="text" placeholder="MAC adresi ya da cihaz etiketindeki Remark" autocomplete="off" />
+                  <button id="okcMacBtn" type="button" class="in-input" title="Bu bilgisayarın MAC adresini getir">MAC getir</button>
+                </dd>
               </dl>
               <p class="help">
-                <b>"eşleşmiyor" hatası alıyorsanız</b> <code>Kimliği keşfet</code>'e basın: ajan,
-                cihazın kabul ettiği <code>X-HardwareId</code> değerini adayları tek tek deneyerek
-                bulur. Cihaz bu değeri <b>8–20 karakter</b> aralığında bekliyor.
-                Aday olarak ekleyebileceğiniz iki şey: cihazın etiketindeki
-                <b>Remark</b> kodu (ör. <code>S1P-F225-033-50</code>) ve —
-                <b>VKN değiştiyse</b> — cihazda hâlâ kayıtlı olabilecek <b>eski VKN</b>.
+                <b>"eşleşmiyor" hatası alıyorsanız</b> önce kutudaki <code>MAC getir</code>
+                düğmesini deneyin; olmazsa <code>Kimliği keşfet</code>'e basın: ajan MAC
+                adresleri dahil bütün adayları cihaza tek tek deneyip kabul edileni bulur.
+                Aşağıya ekleyebileceğiniz iki aday: cihazın etiketindeki <b>Remark</b> kodu
+                (ör. <code>S1P-F225-033-50</code>) ve — <b>VKN değiştiyse</b> — cihazda hâlâ
+                kayıtlı olabilecek <b>eski VKN</b>.
               </p>
               <dl class="kv">
                 <dt>Ek aday (yalnızca keşif için)</dt>
@@ -200,11 +212,15 @@
                 okunup buraya yazılır.
                 <b>Sicil no</b> (<code>X-SerialNo</code>) boş bırakılırsa cihazdan okunur; cihaz
                 "sicil doğrulanamadı" diyorsa markanın verdiği numarayı elle yazın.
-                <b>Cihaz kimliği</b> (<code>X-HardwareId</code>) cihazın etiketindeki
-                <b>Remark</b> kodudur (ör. <code>S1P-F225-033-50</code>). Cihaz bu değeri
-                8–20 karakter aralığında bekliyor ve tutmadığında
-                "x-hardwareid eşleşmiyor" diyerek her isteği reddediyor. Bilmiyorsanız boş
-                bırakıp <code>Kimliği keşfet</code>'e basın — bulunan değer buraya yazılır.
+                <b>Cihaz kimliği</b> (<code>X-HardwareId</code>) <b>bu bilgisayarın MAC
+                adresidir</b> — Hugin'in PC Link dokümanında her örnek bir MAC
+                (<code>AB:12:3F:14:EE</code>) ve eşleşme "PC donanımı ile" diye tarif
+                ediliyor. Kutunun içindeki <code>MAC getir</code> düğmesi onu makineden
+                okuyup yazar; birden fazla ağ kartı varsa her basışta sıradakine geçer.
+                Cihaz PC Link kurulumunda başka bir değer kaydettiyse (etiketteki
+                <b>Remark</b> kodu gibi) onu elle yazın — 8–20 karakter aralığında.
+                Tutmadığında cihaz "x-hardwareid eşleşmiyor" diyerek her isteği reddediyor;
+                emin değilseniz <code>Kimliği keşfet</code> adayları tek tek dener.
               </p>
               <div class="row">
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>

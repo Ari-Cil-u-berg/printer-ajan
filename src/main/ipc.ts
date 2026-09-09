@@ -4,6 +4,7 @@ import type { LogEntry, OkcConfig, PrinterConfig, Station } from '../shared/type
 import type { Agent } from './agent';
 import { envConfig } from './env';
 import { log } from './logger';
+import { localMacAddresses } from './okc/okc';
 import { isPrivateHost, PCLINK_DEFAULT_PORT } from './okc/pclink';
 import { listPrinters, scanNetworkPrinters } from './print/printer-registry';
 import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
@@ -222,6 +223,21 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
       ),
     ),
   );
+
+  /**
+   * BU BİLGİSAYARIN MAC ADRESLERİ — kutunun içindeki düğme bunu çağırıyor.
+   *
+   * `X-HardwareId`'nin ne olduğu Hugin'in PC Link dokümanında yazıyor: her
+   * endpointteki örnek `AB:12:3F:14:EE` ve TSM bölümü "PC Donanım ve cihaz
+   * arasındaki eşleşme (X-Hardwareid ile)" diyor. Yani CİHAZIN değil, bu
+   * bilgisayarın kimliği — ve onu kurulumcuya `ipconfig /all` çıktısından
+   * okutmanın hiçbir gerekçesi yok: makinede zaten duruyor.
+   *
+   * Keşif bunları zaten sırayla deniyor; bu uç, kutuyu ELLE doldurmak
+   * isteyene aynı listeyi veriyor. Cihaz kapalı ya da ulaşılamazken de
+   * çalışıyor — keşifin çalışamadığı tek an.
+   */
+  ipcMain.handle('okc:localIds', () => guard(() => Promise.resolve(localMacAddresses())));
 
   // --- ödeme köprüsü ------------------------------------------------------
 
