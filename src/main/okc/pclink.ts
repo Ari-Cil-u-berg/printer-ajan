@@ -49,15 +49,17 @@ export interface PcLinkTarget {
    * Üç kez tahmin ettik, üçü de yanlıştı: makine adından türetilmiş bir etiket,
    * sonra kırpılmamış hâli, sonra VKN. Cihaz üçüne de `"eşleşmiyor"` dedi.
    * Ortak hata tahmin etmekti — bu başlık cihazda KAYITLI bir değerle
-   * karşılaştırılıyor ve o değerin ne olduğu hiçbir dokümanda yazmıyor.
+   * karşılaştırılıyor.
    *
-   * Bu yüzden artık soruyoruz: `discoverIdentity` adayları tek tek cihaza
-   * deneyip hangisinin kabul edildiğini ölçüyor (`okc.ts`). Buraya yazılan,
-   * o ölçümün sonucu. Boşsa VKN'ye düşülüyor — keşif çalışana kadarki en iyi
-   * tahmin, ama artık yalnızca bir başlangıç noktası.
+   * SONUNDA YAZILI BİR KAYNAK: Hugin'in PC Link Postman dokümanında bu başlığın
+   * örnek değeri her endpointte `AB:12:3F:14:EE`, ve TSM bölümü "PC Donanım, ve
+   * cihaz arasındaki eşleşme de (X-Hardwareid ile) tamamlanmış olur" diyor.
+   * Yani CİHAZIN değil, PC'NİN donanım kimliği — adının söylediği şey. Üç
+   * tahminimizin de neden tutmadığı burada.
    *
-   * ELLE GİRİLMİYOR. Kurulum ekranındaki kutu kaldırıldı: oraya yazılan her
-   * değer cihazı kilitliyordu.
+   * Yine de ölçerek ilerliyoruz: `discoverIdentity` adayları — MAC'ler en başta
+   * — tek tek cihaza deneyip hangisinin kabul edildiğini bakıyor (`okc.ts`).
+   * Buraya yazılan, o ölçümün sonucu. Boşsa VKN'ye düşülüyor.
    */
   hardwareId?: string;
   /**

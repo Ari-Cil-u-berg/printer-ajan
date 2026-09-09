@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hostname } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { createHash } from 'node:crypto';
 import type {
   OkcConfig,
@@ -287,6 +287,22 @@ export class OkcManager extends EventEmitter {
 
     for (const value of extra) add(value, 'elle verilen');
     add(this.config.hardwareId, 'ayardaki değer');
+    /**
+     * PC'NİN MAC ADRESİ — DOKÜMANIN KENDİ ÖRNEĞİ.
+     *
+     * Hugin'in Postman dokümanında bu başlığın örnek değeri `AB:12:3F:14:EE`,
+     * yani bir MAC adresi; TSM bölümü de açıkça "PC Donanım ve cihaz arasındaki
+     * eşleşme (X-Hardwareid ile)" diyor. Adı da bunu söylüyordu: HARDWARE id —
+     * cihazın değil, PC'nin donanımı.
+     *
+     * Üç tahminimiz de (makine adı, eski türetme, VKN) bu yüzden tutmadı.
+     * Adayların en başına MAC'ler giriyor, iki yazımıyla birden: cihazın hangi
+     * biçimi kaydettiğini bilmiyoruz ve iki fazladan istek, bir kurulum
+     * ziyaretinden ucuz.
+     */
+    for (const [index, mac] of macCandidates().entries()) {
+      add(mac, index === 0 ? 'PC MAC adresi' : 'PC MAC adresi (diğer arayüz)');
+    }
     add(digitsOf(this.config.softwareId) ?? undefined, 'kafenin VKN’si');
     add(this.config.serialNo, 'cihaz sicili');
     /**
@@ -880,6 +896,33 @@ function openDocument(body: {
  * kesiliyor, `[A-Za-z0-9._-]` dışındaki karakterler ayıklanıyordu. Cihaz o
  * değeri kaydettiyse hâlâ onu bekliyor; algoritmayı bilen tek yer burası.
  */
+/**
+ * PC'nin MAC adresleri, cihazın kaydetmiş olabileceği iki yazımla.
+ *
+ * Doküman örneği iki nokta üst üsteli ve BÜYÜK harf (`AB:12:3F:14:EE`); Node
+ * küçük harf veriyor. Ayraçsız hâli de (12 karakter) cihazın istediği 8–20
+ * aralığına oturuyor, o yüzden ikisi de deneniyor.
+ *
+ * Sanal arayüzler (docker, vbox, loopback) ELENİYOR: hem `00:00:00:00:00:00`
+ * taşıyorlar hem de makineye kurulan bir yazılımla değişiyorlar — kimliği
+ * değişebilen bir şeye bağlamak, sorunu ileri bir tarihe ertelemek olur.
+ */
+function macCandidates(): string[] {
+  const out: string[] = [];
+  for (const [name, addrs] of Object.entries(networkInterfaces())) {
+    if (/^(lo|docker|veth|br-|vbox|vmnet|utun|awdl|llw)/i.test(name)) continue;
+    for (const addr of addrs ?? []) {
+      if (addr.internal) continue;
+      const mac = addr.mac?.toUpperCase();
+      if (!mac || mac === '00:00:00:00:00:00') continue;
+      if (!out.includes(mac)) out.push(mac);
+      const bare = mac.replace(/:/g, '');
+      if (!out.includes(bare)) out.push(bare);
+    }
+  }
+  return out;
+}
+
 function legacyHardwareId(machine: string): string {
   const cleaned = machine.trim().replace(/[^A-Za-z0-9._-]/g, '');
   if (cleaned.length >= 8) return cleaned.slice(0, 20);
