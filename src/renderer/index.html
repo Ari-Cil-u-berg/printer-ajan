@@ -181,12 +181,14 @@
               <p class="help">
                 <b>"eşleşmiyor" hatası alıyorsanız</b> <code>Kimliği keşfet</code>'e basın: ajan,
                 cihazın kabul ettiği <code>X-HardwareId</code> değerini adayları tek tek deneyerek
-                bulur. <b>VKN değiştiyse</b> cihazda hâlâ eski numara kayıtlı olabilir — eski
-                numarayı aşağıdaki kutuya yazıp keşfi başlatın.
+                bulur. Cihaz bu değeri <b>8–20 karakter</b> aralığında bekliyor.
+                Aday olarak ekleyebileceğiniz iki şey: cihazın etiketindeki
+                <b>Remark</b> kodu (ör. <code>S1P-F225-033-50</code>) ve —
+                <b>VKN değiştiyse</b> — cihazda hâlâ kayıtlı olabilecek <b>eski VKN</b>.
               </p>
               <dl class="kv">
-                <dt>Eski VKN (yalnızca keşif için)</dt>
-                <dd><input id="okcLegacyTaxId" type="text" placeholder="cihazda kayıtlı olabilecek önceki numara" inputmode="numeric" autocomplete="off" /></dd>
+                <dt>Ek aday (yalnızca keşif için)</dt>
+                <dd><input id="okcLegacyTaxId" type="text" placeholder="cihaz etiketindeki Remark ya da eski VKN" autocomplete="off" /></dd>
               </dl>
               <p class="help">
                 <b>VKN</b> — yazarkasanın mükellef kaydındaki vergi numarası. Cihaz bu numarayı
