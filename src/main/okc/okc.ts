@@ -31,6 +31,14 @@ import { PcLinkClient, PcLinkError } from './pclink';
 /** `206` sonrası aynı isteği kaç kez tekrarlayacağız. */
 const FINALIZE_RETRIES = 2;
 const HEALTH_INTERVAL_MS = 60_000;
+/**
+ * Gün sonu bütçesi.
+ *
+ * Cihaz raporu hesaplıyor, MAKBUZU BASIYOR ve sayaçlarını ilerletiyor. Satış
+ * bütçesiyle ölçmek, geri alınamayan bir işlemin ortasında bağlantıyı koparmak
+ * olurdu. Backend'in beklediği süreyle (90 sn) aynı hizada.
+ */
+const DAILY_Z_TIMEOUT_MS = 85_000;
 
 interface PendingSale {
   saleId: string;
@@ -647,6 +655,67 @@ export class OkcManager extends EventEmitter {
     }
 
     return { status: 'UNKNOWN', documentId, error: 'Belge sonlandırılamadı' };
+  }
+
+  /**
+   * GÜN SONU (Z) — cihazdan ister, sonucu OLDUĞU GİBİ döner.
+   *
+   * ── Neden ayrıştırmıyoruz ──────────────────────────────────────────────────
+   * Rapor gövdesi backend'e ham gidiyor. Alan yapısı cihaz sürümüne göre
+   * değişebiliyor (dokümanın kendisi `departmentName` / `deptName` ikilisini
+   * uyarı olarak yazıyor) ve ajanda ayrıştırmak, aynı işi iki yerde yapıp
+   * ajan sürümü eskidiğinde sessizce kaybetmek olurdu. Ajan taşır, backend
+   * okur — satış belgesindeki bölüşümün aynısı.
+   *
+   * ── Neden meşgulken reddediyoruz ───────────────────────────────────────────
+   * Cihaz tek belge açabiliyor ve Z, açık belge varken zaten reddediliyor
+   * ("Açık Belge Var"). Satışın ortasında gün sonu istemek, kasiyerin
+   * beklediği tahsilatı bir raporun arkasına koymak olur.
+   *
+   * ── Sicil neden burada ─────────────────────────────────────────────────────
+   * Raporun hangi cihaza ait olduğu, kaydın tekil anahtarının yarısı. Cihazın
+   * kendi ayarlarından öğrenilmiş sicili biliyorsak beraberinde gidiyor.
+   */
+  async dailyZ(): Promise<{
+    ok: boolean;
+    report?: Record<string, unknown>;
+    serialNo?: string;
+    error?: string;
+  }> {
+    if (!this.client) return { ok: false, error: 'Yazarkasa tanımlanmadı' };
+    if (this.busy) return { ok: false, error: 'Cihaz satış işlemiyle meşgul' };
+
+    this.busy = true;
+    try {
+      const response = await this.client.dailyZ(DAILY_Z_TIMEOUT_MS);
+      this.rememberFingerprint(response.fingerprint);
+
+      if (response.httpStatus !== 200) {
+        const error = errorText(response.body) ?? 'Gün sonu alınamadı';
+        log.warn('okc gün sonu reddedildi', { error, status: response.httpStatus });
+        return { ok: false, error };
+      }
+
+      log.info('okc gün sonu alındı');
+      return {
+        ok: true,
+        report: response.data,
+        ...(this.config?.serialNo ? { serialNo: this.config.serialNo } : {}),
+      };
+    } catch (err) {
+      /*
+       * BURADA "ALINMADI" DİYEMEYİZ. Bağlantı kopmuş olabilir ama cihaz Z'yi
+       * çoktan almış olabilir — gün sonu geri alınamaz ve günde bir kezdir.
+       * Hata metni backend'e gidiyor, backend de bunu "belirsiz" olarak
+       * gösteriyor; "tekrar dene" demiyor.
+       */
+      const error = err instanceof Error ? err.message : String(err);
+      log.warn('okc gün sonu cevapsız', { error });
+      return { ok: false, error };
+    } finally {
+      this.busy = false;
+      void this.refreshHealth();
+    }
   }
 
   /**

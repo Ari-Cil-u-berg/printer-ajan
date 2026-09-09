@@ -30,6 +30,8 @@ const ServerEvents = {
   SALE: 'terminal.sale',
   CANCEL: 'terminal.cancel',
   QUERY_LAST: 'terminal.query-last',
+  /** "Gün sonunu al" — mali günü kapatır, cevabı ack ile döner. */
+  DAILY_Z: 'terminal.daily-z',
 } as const;
 
 /** Ajan → backend. */
@@ -58,6 +60,14 @@ interface QueryPayload {
   requestId: string;
 }
 
+interface DailyZPayload {
+  terminalId: string;
+  requestId: string;
+}
+
+/** Socket.IO'nun `emitWithAck` geri çağrımı. */
+type AckFn = (value: unknown) => void;
+
 export interface BridgeLinkOptions {
   apiBaseUrl: string;
   pairing: BridgePairing;
@@ -75,6 +85,20 @@ export interface BridgeLinkOptions {
   reachable: () => boolean;
   /** Kasadan gelen iptali cihaza taşır. Yalnızca adı geçen satış için. */
   cancelSale: (saleId: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Gün sonu (Z) — MALİ GÜNÜ KAPATIR. Yalnızca backend'in emriyle çalışır.
+   *
+   * Ajanın kendi kararıyla asla çağrılmıyor: hangi anın gün sonu olduğu
+   * kafenin kararı, bizim saatimizin değil.
+   */
+  dailyZ: () => Promise<{
+    ok: boolean;
+    report?: Record<string, unknown>;
+    serialNo?: string;
+    error?: string;
+  }>;
+  /** ÖKC sicili — kesilen belgenin hangi cihaza ait olduğu. */
+  serialNo: () => string | undefined;
 }
 
 export class BridgeLink extends EventEmitter {
@@ -160,7 +184,24 @@ export class BridgeLink extends EventEmitter {
     });
 
     socket.on(ServerEvents.SALE, (payload: SalePayload) => void this.onSale(payload));
-    socket.on(ServerEvents.QUERY_LAST, (payload: QueryPayload) => this.onQuery(payload));
+    /*
+     * CEVAP ACK İLE DÖNÜYOR, ayrı bir olayla değil.
+     *
+     * Backend bu iki komutu `emitWithAck` ile soruyor — yani cevabı, isteğe
+     * iliştirilen geri çağrımda bekliyor. Sorgu cevabı ayrı bir olay olarak
+     * yayınlanıyordu ve backend'in o olay için bir dinleyicisi yok: her sorgu
+     * zaman aşımına düşüp `null` dönüyordu. Bedeli görünmezdi ama gerçek —
+     * kurtarma sorgusu, cevabı kaybolmuş bir satışı cihazdan SORMAK için var
+     * ve hiç cevap alamıyordu.
+     */
+    socket.on(ServerEvents.QUERY_LAST, (payload: QueryPayload, ack?: unknown) => {
+      const response = this.onQuery(payload);
+      if (typeof ack === 'function') (ack as (value: unknown) => void)(response);
+      else this.socket?.emit(ClientEvents.QUERY_RESULT, response);
+    });
+    socket.on(ServerEvents.DAILY_Z, (payload: DailyZPayload, ack?: unknown) => {
+      void this.onDailyZ(payload, typeof ack === 'function' ? (ack as AckFn) : undefined);
+    });
     socket.on(ServerEvents.CANCEL, (payload: { intentId: string }) => {
       void this.onCancel(payload.intentId);
     });
@@ -230,12 +271,10 @@ export class BridgeLink extends EventEmitter {
    * Eşleşmiyorsa doğru cevap `null` ("bilmiyorum"). Başka bir adisyonun onayını
    * buraya yazmak, ödenmemiş bir hesabı kapatmaktır.
    */
-  private onQuery(payload: QueryPayload): void {
+  private onQuery(payload: QueryPayload): Record<string, unknown> {
     const known = this.opts.lookup(payload.intentId);
-    const socket = this.socket;
-    if (!socket) return;
 
-    socket.emit(ClientEvents.QUERY_RESULT, {
+    return {
       requestId: payload.requestId,
       result:
         known && known.status !== 'UNKNOWN'
@@ -243,10 +282,24 @@ export class BridgeLink extends EventEmitter {
               status: known.status,
               ...(known.receiptNo ? { providerRef: known.receiptNo } : {}),
               ...(known.error ? { failureReason: known.error } : {}),
+              ...this.fiscalOf(known),
             }
           : null,
       ...(known ? { intentId: payload.intentId } : {}),
-    });
+    };
+  }
+
+  /**
+   * Gün sonu emri.
+   *
+   * ACK'SİZ DÖNÜLMEZ. Backend cevabı bu geri çağrımda bekliyor ve cevapsızlık,
+   * onun tarafında "Z alınmış olabilir" belirsizliğine düşüyor — Z günde bir
+   * kez alındığı için de ikinci deneme cihazdan ret alıyor. Hata bile olsa
+   * konuşmak, susmaktan iyidir.
+   */
+  private async onDailyZ(payload: DailyZPayload, ack?: AckFn): Promise<void> {
+    const outcome = await this.opts.dailyZ();
+    ack?.({ requestId: payload.requestId, ...outcome });
   }
 
   /**
@@ -292,8 +345,35 @@ export class BridgeLink extends EventEmitter {
       ...(result.receiptNo ? { providerRef: result.receiptNo } : {}),
       ...(result.error ? { failureReason: result.error } : {}),
       ...(result.code ? { slip: { code: result.code } } : {}),
-      ...(result.receiptNo ? { fiscal: { receiptNo: result.receiptNo } } : {}),
+      ...this.fiscalOf(result),
     });
+  }
+
+  /**
+   * Sonuçtaki MALİ BELGE bilgisi — fiş numarası tek başına değil, TOPLAMLARIYLA.
+   *
+   * `Belge Sonlandır` cevabı `data.totals.documentTotal` ve `vatTotal`
+   * döndürüyor ve bunlar atılıyordu. Bedeli iki yerde: mali belge arşivinde
+   * kablolu satışlar hiç görünmüyor, ve muhasebedeki KDV cihazın kendi beyanı
+   * dururken satır oranlarından yeniden hesaplanıyor.
+   *
+   * Sicil de burada: belgenin tekilliği fiş numarası + sicil. Sicilsiz gelen
+   * bir belgeyi backend arşive yazmıyor, çünkü uydurulmuş bir sicil aynı fişin
+   * ikinci kez yazılabilmesi demek.
+   */
+  private fiscalOf(result: OkcSaleResult): { fiscal?: Record<string, unknown> } {
+    if (!result.receiptNo) return {};
+    const serialNo = this.opts.serialNo();
+    const totals = result.totals ?? {};
+    return {
+      fiscal: {
+        receiptNo: result.receiptNo,
+        ...(serialNo ? { fiscalRegisterNo: serialNo } : {}),
+        ...(result.documentId ? { documentId: result.documentId } : {}),
+        ...(money(totals['documentTotal']) ? { totalAmount: money(totals['documentTotal']) } : {}),
+        ...(money(totals['vatTotal']) ? { vatTotal: money(totals['vatTotal']) } : {}),
+      },
+    };
   }
 
   private sendHeartbeat(): void {
@@ -406,6 +486,20 @@ export async function pairBridge(apiBaseUrl: string, code: string): Promise<Brid
 
 function origin(apiBaseUrl: string): string {
   return apiBaseUrl.replace(/\/$/, '');
+}
+
+/**
+ * Cihazın tutar metni → backend'in beklediği biçim (`"190.00"`).
+ *
+ * Cihaz virgüllü ya da kuruşsuz gönderebiliyor; backend şeması iki haneye
+ * kadar noktalı ondalık istiyor. Okunamayan bir tutar GÖNDERİLMİYOR: eksik bir
+ * alan, yanlış bir tutardan iyidir ve backend o zaman tahsil edilen tutara
+ * düşüyor.
+ */
+function money(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseFloat(value.replace(',', '.'));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed.toFixed(2) : undefined;
 }
 
 function message(err: unknown): string {

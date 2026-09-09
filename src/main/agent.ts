@@ -217,6 +217,10 @@ export class Agent extends EventEmitter {
       // Kimlik kontrolü `OkcManager` tarafında: yalnızca adı geçen satış
       // iptal edilir, arada başlamış başka bir adisyonunki değil.
       cancelSale: (saleId) => this.okc.cancelSale(saleId),
+      // Gün sonu SUNUCUDAN emredilir. Ajanın kendi zamanlayıcısı yok ve
+      // olmamalı: mali günü kapatmak kafenin kararı.
+      dailyZ: () => this.okc.dailyZ(),
+      serialNo: () => this.okc.getConfig()?.serialNo,
     });
 
     link.on('changed', () => this.emitStatus());

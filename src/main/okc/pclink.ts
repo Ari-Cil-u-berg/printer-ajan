@@ -266,6 +266,24 @@ export class PcLinkClient {
   }
 
   /**
+   * `POST /v1/reports/Z/print` — GÜN SONU. Mali günü KAPATIR.
+   *
+   * ── Neden `print` ──────────────────────────────────────────────────────────
+   * Doküman iki uç veriyor (`/reports/Z` ve `/reports/Z/print`) ve "response
+   * formatı, alan yapısı ve alt kırılımlar açısından aynıdır" diyor. Fark
+   * makbuzun basılması ve gün sonu bunu gerektiriyor: Z raporu kafenin
+   * saklamakla yükümlü olduğu mali bir belge, ekrandaki bir özet değil.
+   *
+   * ── Neden bu kadar uzun bekliyor ───────────────────────────────────────────
+   * Cihaz raporu hesaplıyor, yazdırıyor ve sayaçlarını ilerletiyor. Satış
+   * bütçesiyle ölçmek, tam da geri alınamayan işlemin ortasında bağlantıyı
+   * koparmak olurdu.
+   */
+  dailyZ(timeoutMs: number): Promise<PcLinkResponse<Record<string, unknown>>> {
+    return this.request('POST', '/v1/reports/Z/print', {}, timeoutMs);
+  }
+
+  /**
    * `signal` — bekleyen isteği YARIDA KESMEK için.
    *
    * `Belge Sonlandır` cihazda kart okutulmasını bekliyor ve bütçesi iki
