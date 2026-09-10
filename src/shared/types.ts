@@ -284,6 +284,42 @@ export interface OkcIdentityProbe {
   deviceTaxId?: string;
 }
 
+/**
+ * TANILAMA — cihaza "hangi kimliği kabul ediyorsun" diye SORAR.
+ *
+ * Keşifle farkı: keşif bir DEĞER arıyor (adayları deneyip kabul edileni bulur),
+ * tanılama BAŞLIK KOMBİNASYONUNU ölçüyor. İkincisi, keşif hiçbir aday
+ * bulamadığında geriye kalan tek soruyu cevaplıyor: cihaz bu başlığı gerçekten
+ * arıyor mu, arıyorsa hangi uçta ve ne diyor?
+ *
+ * Sahada üç sürüm boyunca eksik olan şey buydu. "Hiçbir aday kabul edilmedi"
+ * cümlesi, sıradaki adımı kimseye söylemiyor; cihazın her kombinasyon için
+ * verdiği cevap söylüyor.
+ */
+export interface OkcDiagnosticRow {
+  /** Ölçülen kombinasyonun adı: "yalnızca VKN", "başlıksız" gibi. */
+  label: string;
+  endpoint: string;
+  /** Gönderilen başlıklar — maskesiz, hepsi kurulum bilgisi. */
+  headers: Record<string, string>;
+  httpStatus: number;
+  ok: boolean;
+  /** Cihazın hata kodu (`ERR_MATCH_ERROR` gibi), geldiyse. */
+  code?: string;
+  /** Cihazın kendi cümlesi. Bakılacak yer burası. */
+  message?: string;
+}
+
+export interface OkcDiagnostics {
+  rows: OkcDiagnosticRow[];
+  /** Kabul edilen ilk kombinasyonun adı — hiçbiri geçmediyse `null`. */
+  accepted: string | null;
+  /** Cihazın ayarlarından okunabildiyse mükellef VKN'si. */
+  deviceTaxId?: string;
+  /** Cihazın bildirdiği sicil, okunabildiyse. */
+  deviceSerialNo?: string;
+}
+
 /** Backend'in gönderdiği satış emri. Belge backend'de kurulur, ajan taşır. */
 export interface OkcSaleRequest {
   saleId: string;

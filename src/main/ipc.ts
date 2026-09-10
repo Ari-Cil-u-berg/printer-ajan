@@ -239,6 +239,17 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
    */
   ipcMain.handle('okc:localIds', () => guard(() => Promise.resolve(localMacAddresses())));
 
+  /**
+   * TANILAMA — cihaza hangi kimliği istediğini SORAR, tahmin etmez.
+   *
+   * Keşif bir değer arıyor; bu, başlık kombinasyonunu ölçüyor. Hiçbir adayın
+   * kabul edilmediği kurulumlarda geriye kalan tek soru bu ve cevabı yalnızca
+   * cihaz verebiliyor.
+   *
+   * İki uç da salt okunur: belge açmıyor, ödeme almıyor, gün kapatmıyor.
+   */
+  ipcMain.handle('okc:diagnose', () => guard(() => agent.okc.diagnose()));
+
   // --- ödeme köprüsü ------------------------------------------------------
 
   ipcMain.handle('bridge:pair', (_e, code: unknown) =>

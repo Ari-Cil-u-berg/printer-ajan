@@ -88,6 +88,14 @@ export interface PcLinkTarget {
    * boş bırakmaktan daha kötü bir cevap alır.
    */
   serialNo?: string;
+  /**
+   * Kimlik başlıkları OLDUĞU GİBİ gitsin — boş olan hiç gitmesin.
+   *
+   * Yalnızca tanılama için. Normal yolda `X-HardwareId` boşsa VKN'ye düşüyor
+   * (bkz. `identityHeaders`) ve bu yedek, "başlığı hiç göndermezsek ne olur"
+   * ölçümünü imkânsız kılıyor.
+   */
+  exactIdentity?: boolean;
 }
 
 /**
@@ -226,7 +234,14 @@ export class PcLinkClient {
     const taxId = this.target.softwareId?.trim();
     // Keşifle bulunmuş bir değer varsa O gider; yoksa VKN — cihazın tanıdığı
     // tek numara ve keşif çalışana kadarki en iyi tahmin.
-    const hardwareId = this.target.hardwareId?.trim() || taxId;
+    //
+    // TANILAMADA BU YEDEK KAPALI (`exactIdentity`): "başlığı hiç göndermeden"
+    // ne olduğunu ölçmek, tam da o yedek yüzünden imkânsızdı — kutu boşken de
+    // VKN gidiyordu ve cihazın "boş olamaz" mı "eşleşmiyor" mu dediğini
+    // ayırt edemiyorduk. İkisi farklı iki arıza.
+    const hardwareId = this.target.exactIdentity
+      ? this.target.hardwareId?.trim()
+      : this.target.hardwareId?.trim() || taxId;
     return {
       ...(hardwareId ? { 'X-HardwareId': hardwareId } : {}),
       ...(taxId ? { 'X-SoftwareId': taxId } : {}),
@@ -245,6 +260,30 @@ export class PcLinkClient {
     return new PcLinkClient({
       ...this.target,
       ...(hardwareId ? { hardwareId } : { hardwareId: undefined }),
+    });
+  }
+
+  /**
+   * Kimlik başlıklarının TAM OLARAK verilen hâliyle gittiği bir kopya.
+   *
+   * Tanılama bunu kullanıyor. Normal yolda `X-HardwareId` boşsa VKN'ye
+   * düşülüyor ve bu, ölçmek istediğimiz şeyi ölçülemez yapıyor: "başlığı hiç
+   * göndermezsek cihaz ne der" sorusunun cevabı, yedek yüzünden hiç
+   * sorulamıyordu.
+   */
+  withIdentity(identity: {
+    softwareId?: string | undefined;
+    hardwareId?: string | undefined;
+    serialNo?: string | undefined;
+  }): PcLinkClient {
+    return new PcLinkClient({
+      host: this.target.host,
+      port: this.target.port,
+      ...(this.target.fingerprint ? { fingerprint: this.target.fingerprint } : {}),
+      exactIdentity: true,
+      ...(identity.softwareId ? { softwareId: identity.softwareId } : {}),
+      ...(identity.hardwareId ? { hardwareId: identity.hardwareId } : {}),
+      ...(identity.serialNo ? { serialNo: identity.serialNo } : {}),
     });
   }
 

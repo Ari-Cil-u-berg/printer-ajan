@@ -5,6 +5,8 @@ import { hostname, networkInterfaces } from 'node:os';
 import { createHash } from 'node:crypto';
 import type {
   OkcConfig,
+  OkcDiagnosticRow,
+  OkcDiagnostics,
   OkcHealth,
   OkcIdentityProbe,
   OkcSaleRequest,
@@ -655,6 +657,128 @@ export class OkcManager extends EventEmitter {
     }
 
     return { status: 'UNKNOWN', documentId, error: 'Belge sonlandırılamadı' };
+  }
+
+  /**
+   * TANILAMA — cihaza HANGİ KİMLİĞİ istediğini sorar.
+   *
+   * ── Neden keşif yetmedi ────────────────────────────────────────────────────
+   * Keşif bir DEĞER arıyor: adayları tek tek deneyip kabul edileni buluyor.
+   * Hiçbiri kabul edilmediğinde eli boş kalıyor ve söyleyebildiği tek şey
+   * "hiçbir aday olmadı" — sıradaki adımı kimseye söylemeyen bir cümle.
+   *
+   * Cevaplanmamış soru şu: cihaz bu başlığı GERÇEKTEN arıyor mu, arıyorsa
+   * hangi uçta? Bunu ölçmek için değeri değiştirmek yetmiyor, BAŞLIĞIN VARLIĞINI
+   * değiştirmek gerekiyor — ve normal yolda bu imkânsızdı, çünkü `X-HardwareId`
+   * boşsa VKN'ye düşüyordu (`withIdentity` bu yüzden var).
+   *
+   * ── Ne ölçüyor ────────────────────────────────────────────────────────────
+   * Aynı iki uca (`/v1/settings` ve `/v1/status`) altı ayrı başlık
+   * kombinasyonuyla bakıyor: hiç başlıksız, yalnız VKN, yalnız donanım, VKN +
+   * sicil, üçü birden, ve MAC'li hâli. Cihazın her biri için verdiği cevap —
+   * HTTP kodu, hata kodu ve KENDİ CÜMLESİ — olduğu gibi geri dönüyor.
+   *
+   * Okuması şöyle: "başlıksız" geçiyorsa cihaz o uçta kimlik aramıyor.
+   * `/settings` geçip `/status` düşüyorsa kontrol uca göre değişiyor. Hepsi
+   * aynı cümleyle düşüyorsa eksik olan değer değil, CİHAZDAKİ AKTİVASYON —
+   * `ERR_PCLINK_INACTIVE` ve `ERR_MATCH_ERROR` farklı iki iş.
+   *
+   * ── Neden zararsız ────────────────────────────────────────────────────────
+   * İki uç da SALT OKUNUR: belge açmıyor, ödeme almıyor, gün kapatmıyor.
+   * Satışın ortasında çalıştırılsa bile cihazda hiçbir şeyi değiştirmiyor.
+   */
+  async diagnose(): Promise<OkcDiagnostics> {
+    if (!this.client || !this.config) {
+      return { rows: [], accepted: null };
+    }
+
+    const taxId = digitsOf(this.config.softwareId) ?? undefined;
+    const serialNo = this.config.serialNo;
+    const stored = this.config.hardwareId;
+    const mac = localMacAddresses()[0]?.value;
+
+    const combos: { label: string; identity: Parameters<PcLinkClient['withIdentity']>[0] }[] = [
+      // Sıra bilinçli: en AZ bilgiyle başlıyor. "Başlıksız" geçen bir uç,
+      // aradığımız başlığın o uçta hiç kontrol edilmediğini söyler ve geri
+      // kalan bütün satırların anlamını değiştirir.
+      { label: 'başlıksız', identity: {} },
+      { label: 'yalnız VKN', identity: { softwareId: taxId } },
+      { label: 'VKN + sicil', identity: { softwareId: taxId, serialNo } },
+      { label: 'kayıtlı cihaz kimliği', identity: { softwareId: taxId, hardwareId: stored, serialNo } },
+      { label: 'MAC adresi', identity: { softwareId: taxId, hardwareId: mac, serialNo } },
+      { label: 'donanım = VKN', identity: { softwareId: taxId, hardwareId: taxId, serialNo } },
+    ];
+
+    const rows: OkcDiagnosticRow[] = [];
+    let accepted: string | null = null;
+
+    for (const combo of combos) {
+      const client = this.client.withIdentity(combo.identity);
+      const headers: Record<string, string> = {
+        ...(combo.identity.softwareId ? { 'X-SoftwareId': combo.identity.softwareId } : {}),
+        ...(combo.identity.hardwareId ? { 'X-HardwareId': combo.identity.hardwareId } : {}),
+        ...(combo.identity.serialNo ? { 'X-SerialNo': combo.identity.serialNo } : {}),
+      };
+
+      for (const endpoint of ['/v1/settings', '/v1/status'] as const) {
+        try {
+          const response =
+            endpoint === '/v1/settings' ? await client.settings() : await client.status();
+          this.rememberFingerprint(response.fingerprint);
+          const ok = response.httpStatus === 200;
+          const code = response.body.error?.code;
+          const message = ok ? undefined : errorText(response.body);
+          rows.push({
+            label: combo.label,
+            endpoint,
+            headers,
+            httpStatus: response.httpStatus,
+            ok,
+            ...(code ? { code } : {}),
+            ...(message ? { message } : {}),
+          });
+          if (ok && endpoint === '/v1/status' && accepted === null) accepted = combo.label;
+        } catch (err) {
+          rows.push({
+            label: combo.label,
+            endpoint,
+            headers,
+            httpStatus: 0,
+            ok: false,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    // Cihaz kendi mükellef numarasını ve sicilini `GET /v1/settings`'te
+    // veriyor ve o uç kimlik istemiyor olabilir: kurulumun doğru numarası
+    // buradan okunuyor, kurulumcunun yazdığı tahminden değil.
+    const learned = await this.readDeviceIdentity();
+
+    return {
+      rows,
+      accepted,
+      ...(learned.taxId ? { deviceTaxId: learned.taxId } : {}),
+      ...(learned.serialNo ? { deviceSerialNo: learned.serialNo } : {}),
+    };
+  }
+
+  /** Cihazın kendi beyanı: mükellef VKN'si ve sicil. Kimlik başlığı göndermiyor. */
+  private async readDeviceIdentity(): Promise<{ taxId?: string; serialNo?: string }> {
+    if (!this.client) return {};
+    try {
+      const response = await this.client.withIdentity({}).settings();
+      if (response.httpStatus !== 200) return {};
+      const taxId = digitsOf(response.data.merchant?.taxId);
+      const serialNo = response.data.serialNo?.trim();
+      return {
+        ...(taxId ? { taxId } : {}),
+        ...(serialNo ? { serialNo } : {}),
+      };
+    } catch {
+      return {};
+    }
   }
 
   /**

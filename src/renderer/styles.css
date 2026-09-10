@@ -450,3 +450,25 @@ button:disabled { opacity: 0.5; cursor: default; }
   .kv, .station .grid { grid-template-columns: 1fr; gap: 4px; }
   .kv dd { margin-bottom: 6px; }
 }
+
+/* ── tanılama çıktısı ──────────────────────────────────────────────────────
+ *
+ * Tıkanmış bir kurulumda bakılacak tek yer. Monospace ve kaydırmalı: cihazın
+ * cevabı olduğu gibi okunmalı, sarmalanıp bozulmamalı.
+ */
+.diag {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.diag pre {
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+button.ghost.small { padding: 3px 9px; font-size: 11px; }

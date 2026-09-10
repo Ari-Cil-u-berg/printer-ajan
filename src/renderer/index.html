@@ -226,9 +226,33 @@
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>
                 <button id="okcTestBtn" class="ghost">Bağlantıyı sına</button>
                 <button id="okcDiscoverBtn" class="ghost">Kimliği keşfet</button>
+                <!--
+                  TANILAMA: keşif hiçbir aday bulamadığında kalan tek soru.
+                  Keşif bir DEĞER arıyor; bu, cihazın hangi BAŞLIĞI hangi uçta
+                  aradığını ölçüyor ve cevabı cihazın kendi cümleleriyle veriyor.
+                -->
+                <button id="okcDiagnoseBtn" class="ghost">Tanılama</button>
                 <button id="okcClearBtn" class="ghost danger">Kaldır</button>
               </div>
               <p class="msg" id="okcMsg" role="status"></p>
+              <!--
+                Tanılama çıktısı. Gizli duruyor: normal bir kurulumda kimsenin
+                okumasına gerek yok, tıkanmış bir kurulumda ise bakılacak TEK
+                yer burası.
+              -->
+              <div id="okcDiagBox" class="diag hidden">
+                <div class="row">
+                  <b>Cihazın cevapları</b>
+                  <button id="okcDiagCopyBtn" type="button" class="ghost small">Kopyala</button>
+                  <button id="okcDiagHideBtn" type="button" class="ghost small">Kapat</button>
+                </div>
+                <pre id="okcDiagText"></pre>
+                <p class="help">
+                  Hiçbir satır <code>200</code> dönmüyorsa eksik olan bir değer değil,
+                  <b>cihazdaki PC Link aktivasyonu</b> olabilir (<code>ERR_PCLINK_INACTIVE</code>).
+                  Bu çıktıyı olduğu gibi Hugin destek ekibine iletebilirsiniz.
+                </p>
+              </div>
             </section>
 
             <!--

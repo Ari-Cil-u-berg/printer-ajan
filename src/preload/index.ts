@@ -48,6 +48,8 @@ const api = {
   localHardwareIds: (): Promise<
     { ok: true; data: { value: string; bare: string; iface: string }[] } | { ok: false; error: string }
   > => ipcRenderer.invoke('okc:localIds'),
+  /** Cihaza "hangi kimliği kabul ediyorsun" diye sorar. Salt okunur. */
+  diagnoseOkc: () => ipcRenderer.invoke('okc:diagnose'),
   pairBridge: (code: string) => ipcRenderer.invoke('bridge:pair', code),
   unpairBridge: () => ipcRenderer.invoke('bridge:unpair'),
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('settings:autostart', enabled),

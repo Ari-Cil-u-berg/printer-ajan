@@ -113,6 +113,22 @@ interface OkcIdentityProbe {
   deviceTaxId?: string;
 }
 
+/** `okc:diagnose` sonucu — ayrıntı için `shared/types.ts`. */
+interface OkcDiagnostics {
+  rows: {
+    label: string;
+    endpoint: string;
+    headers: Record<string, string>;
+    httpStatus: number;
+    ok: boolean;
+    code?: string;
+    message?: string;
+  }[];
+  accepted: string | null;
+  deviceTaxId?: string;
+  deviceSerialNo?: string;
+}
+
 interface AgentBridge {
   getStatus(): Promise<StatusSnapshot>;
   onStatus(cb: (s: StatusSnapshot) => void): void;
@@ -131,6 +147,8 @@ interface AgentBridge {
   discoverOkcIdentity(extra?: string): Promise<Result<OkcIdentityProbe>>;
   /** Bu bilgisayarın MAC adresleri — `X-HardwareId` kutusundaki düğme için. */
   localHardwareIds(): Promise<Result<{ value: string; bare: string; iface: string }[]>>;
+  /** Cihaza hangi kimlik başlıklarını istediğini sorar. Salt okunur. */
+  diagnoseOkc(): Promise<Result<OkcDiagnostics>>;
   pairBridge(code: string): Promise<Result<StatusSnapshot>>;
   unpairBridge(): Promise<Result<StatusSnapshot>>;
   setAutostart(enabled: boolean): Promise<Result<StatusSnapshot>>;
@@ -469,6 +487,70 @@ $('okcMacBtn').addEventListener('click', async () => {
       : `${pick.label}: ${pick.value} — "Kaydet ve bağlan" ile deneyin.`,
     'ok',
   );
+});
+
+/**
+ * TANILAMA — "hiçbir aday olmadı"dan sonra kalan tek soru.
+ *
+ * Keşif bir DEĞER arıyor. Bu, cihazın hangi BAŞLIĞI hangi uçta aradığını
+ * ölçüyor: aynı iki salt-okunur uca altı ayrı kimlik kombinasyonuyla bakıp
+ * cihazın her biri için verdiği cevabı olduğu gibi gösteriyor.
+ *
+ * Çıktı KOPYALANABİLİR, çünkü bir sonraki adım çoğu zaman Hugin'e sormak ve
+ * "eşleşmiyor diyor" cümlesiyle sorulan soru üç kez cevapsız kaldı. Cihazın
+ * kendi cevap tablosuyla sorulan soru farklı bir soru.
+ */
+function formatDiagnostics(d: OkcDiagnostics): string {
+  const lines: string[] = [];
+  lines.push(`Cihaz VKN: ${d.deviceTaxId ?? 'okunamadı'}`);
+  lines.push(`Cihaz sicil: ${d.deviceSerialNo ?? 'okunamadı'}`);
+  lines.push('');
+  for (const row of d.rows) {
+    const sent = Object.entries(row.headers)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(' ');
+    const verdict = row.ok ? 'GEÇTİ' : `${row.code ?? 'hata'}: ${row.message ?? '—'}`;
+    lines.push(
+      `${row.ok ? '✓' : '✗'} ${row.label} → ${row.endpoint} · HTTP ${row.httpStatus} · ${verdict}`,
+    );
+    lines.push(`    gönderilen: ${sent || '(başlık yok)'}`);
+  }
+  return lines.join('\n');
+}
+
+$('okcDiagnoseBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('okcDiagnoseBtn');
+  btn.disabled = true;
+  setMsg($('okcMsg'), 'Cihaza hangi kimliği istediği soruluyor…');
+  const res = await bridge.diagnoseOkc();
+  btn.disabled = false;
+
+  if (!res.ok) return setMsg($('okcMsg'), res.error, 'bad');
+
+  const text = formatDiagnostics(res.data);
+  $('okcDiagText').textContent = text;
+  $('okcDiagBox').classList.remove('hidden');
+
+  const { accepted, rows } = res.data;
+  const anyOk = rows.some((row) => row.ok);
+  setMsg(
+    $('okcMsg'),
+    accepted
+      ? `Cihaz "${accepted}" kombinasyonunu kabul ediyor — aşağıdaki tabloya bakın.`
+      : anyOk
+        ? 'Bazı uçlar geçti, satış ucu geçmedi — tablo hangisinin nerede düştüğünü gösteriyor.'
+        : 'Cihaz hiçbir kombinasyonu kabul etmedi. Bu, değerin değil AKTİVASYONUN eksik olduğuna işaret eder.',
+    accepted ? 'ok' : 'bad',
+  );
+});
+
+$('okcDiagCopyBtn').addEventListener('click', () => {
+  void navigator.clipboard.writeText($('okcDiagText').textContent ?? '');
+  setMsg($('okcMsg'), 'Tanılama çıktısı kopyalandı.', 'ok');
+});
+
+$('okcDiagHideBtn').addEventListener('click', () => {
+  $('okcDiagBox').classList.add('hidden');
 });
 
 /**
