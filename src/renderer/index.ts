@@ -101,6 +101,18 @@ interface StatusSnapshot {
   bridgeConnected: boolean;
 }
 
+interface UsbPrinterHint {
+  name: string;
+  driverOk: boolean;
+}
+
+/**
+ * Windows'un kendi sanal yazıcıları — fiş basmazlar. Listede en alta ve
+ * ayrı grupta durur; tek başlarına görünüyorlarsa asıl yazıcının sürücüsü
+ * kurulmamış demektir.
+ */
+const VIRTUAL_PRINTER = /onenote|xps|pdf|fax|faks|send to|gönder|anydesk|teamviewer|snagit|microsoft print/i;
+
 interface DiscoveredPrinter {
   kind: 'spooler' | 'network';
   label: string;
@@ -156,6 +168,7 @@ interface AgentBridge {
   testPairingPrint(deviceId: string): Promise<Result<boolean>>;
   listPrinters(): Promise<Result<DiscoveredPrinter[]>>;
   scanNetwork(): Promise<Result<DiscoveredPrinter[]>>;
+  usbPrinterHints(): Promise<Result<UsbPrinterHint[]>>;
   setPrinter(station: Station, printer: PrinterConfig | null): Promise<Result<StatusSnapshot>>;
   testPrint(station: Station): Promise<Result<boolean>>;
   probe(): Promise<Result<StatusSnapshot>>;
@@ -206,6 +219,8 @@ const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, e
 const LOG_VIEW_MAX = 1000;
 
 let discovered: DiscoveredPrinter[] = [];
+/** Sürücüsüz USB cihaz ipuçları; yalnızca gerçek yazıcı bulunamadığında sorulur. */
+let usbHints: UsbPrinterHint[] = [];
 let currentStatus: StatusSnapshot | null = null;
 let logEntries: LogEntry[] = [];
 
@@ -833,14 +848,41 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
   grid.append(netLabel, netRow);
 
   const spoolSelect = document.createElement('select');
+  const spoolHint = document.createElement('p');
+  spoolHint.className = 'help spool-hint';
   const refreshSpoolOptions = (): void => {
     spoolSelect.innerHTML = '';
     const names = discovered.filter((d) => d.kind === 'spooler').map((d) => d.printerName!);
     const current = printer?.target.kind === 'spooler' ? printer.target.printerName : '';
     if (current && !names.includes(current)) names.unshift(current);
-    if (names.length === 0) spoolSelect.append(new Option('(kurulu yazıcı bulunamadı)', ''));
-    for (const n of names) spoolSelect.append(new Option(n, n));
-    if (current) spoolSelect.value = current;
+    const real = names.filter((n) => !VIRTUAL_PRINTER.test(n));
+    const virtual = names.filter((n) => VIRTUAL_PRINTER.test(n));
+    // İlk seçenek bilerek boş: yoksa listenin başındaki OneNote sessizce seçiliyordu.
+    spoolSelect.append(new Option(real.length > 0 ? '— Yazıcı seçin —' : '— Fiş yazıcısı bulunamadı —', ''));
+    for (const n of real) spoolSelect.append(new Option(n, n));
+    if (virtual.length > 0) {
+      const group = document.createElement('optgroup');
+      group.label = 'Sanal yazıcılar (fiş basmaz)';
+      for (const n of virtual) group.append(new Option(n, n));
+      spoolSelect.append(group);
+    }
+    spoolSelect.value = current || '';
+
+    if (real.length > 0) {
+      spoolHint.textContent = '';
+      spoolHint.classList.add('hidden');
+      return;
+    }
+    const lines = [
+      'Fiş yazıcınız listede yok: Windows\'ta yazıcı olarak kurulu değil. Yazıcının sürücüsünü kurun (XP-80 için Xprinter sürücüsü) — Ayarlar → Yazıcılar ve tarayıcılar\'da görünmeli — sonra "Kurulu yazıcıları yenile"ye basın.',
+      'Yazıcının ağ kablosu varsa sürücüye gerek yok: Bağlantı → "Ağ yazıcısı (IP)" seçin.',
+    ];
+    const missing = usbHints.filter((h) => !h.driverOk).map((h) => h.name);
+    const unqueued = usbHints.filter((h) => h.driverOk).map((h) => h.name);
+    if (missing.length > 0) lines.push(`USB'de sürücüsü olmayan cihaz görüldü: ${missing.join(', ')}.`);
+    else if (unqueued.length > 0) lines.push(`USB'de yazıcı bağlantısı görüldü (${unqueued.join(', ')}) ama yazıcı sürücüsü kurulmamış.`);
+    spoolHint.textContent = lines.join(' ');
+    spoolHint.classList.remove('hidden');
   };
   refreshSpoolOptions();
   const spoolLabel = label('Yazıcı');
@@ -868,6 +910,7 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
   grid.append(label('Kesici'), cutWrap);
 
   card.appendChild(grid);
+  card.appendChild(spoolHint);
 
   const applyTypeVisibility = (): void => {
     const isNet = typeSelect.value === 'network';
@@ -875,8 +918,14 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
     netRow.classList.toggle('hidden', !isNet);
     spoolLabel.classList.toggle('hidden', isNet);
     spoolSelect.classList.toggle('hidden', isNet);
+    spoolHint.classList.toggle('hidden', isNet || spoolHint.textContent === '');
   };
-  typeSelect.addEventListener('change', applyTypeVisibility);
+  // USB'ye geçince listeyi tazele: sürücü az önce kurulmuş olabilir.
+  typeSelect.addEventListener('change', () => {
+    applyTypeVisibility();
+    // Yalnızca bu kartın listesi tazelenir; bütün kartları yeniden çizmek bu seçimi sıfırlardı.
+    if (typeSelect.value === 'spooler') void loadPrinters().then(refreshSpoolOptions);
+  });
   applyTypeVisibility();
 
   const msg = document.createElement('p');
@@ -890,6 +939,10 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
       typeSelect.value === 'network'
         ? { kind: 'network' as const, host: hostInput.value.trim(), port: Number(portInput.value) || 9100 }
         : { kind: 'spooler' as const, printerName: spoolSelect.value };
+    if (target.kind === 'spooler' && !target.printerName) {
+      setMsg(msg, 'Önce listeden fiş yazıcısını seçin.', 'bad');
+      return;
+    }
     const res = await o.onSave({
       target,
       codepage: cpSelect.value,
@@ -1029,14 +1082,29 @@ async function copyLogs(): Promise<void> {
 
 // --- bağlama ---------------------------------------------------------------
 
-async function refreshPrinters(): Promise<void> {
+/** Kurulu yazıcıları (ve gerekiyorsa USB ipuçlarını) okur; ekranı çizmez. */
+async function loadPrinters(): Promise<boolean> {
   const res = await bridge.listPrinters();
   if (res.ok) {
     discovered = res.data;
-    if (currentStatus) {
-      renderPairings(currentStatus);
-      renderStations(currentStatus);
+    // Gerçek fiş yazıcısı yoksa Windows'a USB'de ne takılı olduğunu sor —
+    // "sürücü kurulu değil" uyarısına cihazın adını eklemek için.
+    const hasReal = discovered.some((d) => d.kind === 'spooler' && !VIRTUAL_PRINTER.test(d.printerName ?? ''));
+    if (!hasReal) {
+      const hints = await bridge.usbPrinterHints();
+      usbHints = hints.ok ? hints.data : [];
+    } else {
+      usbHints = [];
     }
+    return true;
+  }
+  return false;
+}
+
+async function refreshPrinters(): Promise<void> {
+  if ((await loadPrinters()) && currentStatus) {
+    renderPairings(currentStatus);
+    renderStations(currentStatus);
   }
 }
 

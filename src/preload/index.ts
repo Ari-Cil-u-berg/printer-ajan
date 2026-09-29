@@ -29,6 +29,7 @@ const api = {
   testPairingPrint: (deviceId: string) => ipcRenderer.invoke('pairings:test', deviceId),
   listPrinters: () => ipcRenderer.invoke('printers:list'),
   scanNetwork: () => ipcRenderer.invoke('printers:scan'),
+  usbPrinterHints: () => ipcRenderer.invoke('printers:usb-hints'),
   setPrinter: (station: Station, printer: PrinterConfig | null) =>
     ipcRenderer.invoke('printers:set', station, printer),
   testPrint: (station: Station) => ipcRenderer.invoke('printers:test', station),

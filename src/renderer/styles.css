@@ -226,6 +226,7 @@ main { padding: 20px 24px 36px; overflow-y: auto; }
 }
 .card h2 { font-size: 13px; margin: 0 0 10px; font-weight: 650; letter-spacing: 0.01em; }
 .help { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.spool-hint { color: var(--warn); margin-top: 10px; line-height: 1.45; }
 
 .warnbox { border-color: var(--warn); }
 .warnbox h2 { color: var(--warn); }

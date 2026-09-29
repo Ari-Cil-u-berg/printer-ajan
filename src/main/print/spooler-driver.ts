@@ -79,6 +79,51 @@ export async function listSpoolerPrinters(): Promise<string[]> {
   }
 }
 
+/**
+ * Windows: USB'ye takılı, yazıcıya benzeyen ama Windows'ta yazıcı kuyruğu
+ * olmayan cihazlar — "XP-80 takılı ama listede yok" sorusunun cevabı.
+ *
+ * Win32_Printer yalnızca sürücüsü kurulmuş kuyrukları görür. Sürücüsüz bir fiş
+ * yazıcısı Aygıt Yöneticisi'nde ya hatalı/bilinmeyen USB cihazı ya da yalnızca
+ * "USB Yazdırma Desteği" (USBPRINT) olarak durur. Onları adıyla gösterip
+ * kullanıcıya "sürücüyü kur" demek için. Sezgisel: yanlış pozitif olabilir,
+ * ekranda yalnızca ipucu olarak kullanılır, hiçbir şeye bağlanmaz.
+ */
+export interface UsbPrinterHint {
+  name: string;
+  /** false: Windows cihazı tanıyor ama sürücüsü yok ya da hatalı. */
+  driverOk: boolean;
+}
+
+export async function listUnqueuedUsbPrinters(): Promise<UsbPrinterHint[]> {
+  if (process.platform !== 'win32') return [];
+  const script = [
+    "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {",
+    "  $_.InstanceId -like 'USBPRINT\\*' -or",
+    "  ($_.InstanceId -like 'USB\\*' -and ($_.Status -ne 'OK' -or $_.Class -eq 'Printer' -or $_.FriendlyName -match 'print|pos|thermal|receipt|xp-|xprinter'))",
+    "} | ForEach-Object { \"$($_.Status)|$($_.FriendlyName)\" }",
+  ].join(' ');
+  try {
+    const { stdout } = await run(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { timeout: EXEC_TIMEOUT_MS, windowsHide: true },
+    );
+    const seen = new Set<string>();
+    const hints: UsbPrinterHint[] = [];
+    for (const line of splitLines(stdout)) {
+      const [status = '', ...rest] = line.split('|');
+      const name = rest.join('|').trim() || 'Bilinmeyen USB cihazı';
+      if (seen.has(name)) continue;
+      seen.add(name);
+      hints.push({ name, driverOk: status.trim() === 'OK' });
+    }
+    return hints;
+  } catch {
+    return [];
+  }
+}
+
 /** True when the queue exists and is accepting jobs. */
 export async function probeSpoolerPrinter(printerName: string): Promise<boolean> {
   const printers = await listSpoolerPrinters();

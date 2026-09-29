@@ -6,7 +6,7 @@ import { envConfig } from './env';
 import { log } from './logger';
 import { localMacAddresses } from './okc/okc';
 import { isPrivateHost, PCLINK_DEFAULT_PORT } from './okc/pclink';
-import { listPrinters, scanNetworkPrinters } from './print/printer-registry';
+import { listPrinters, listUnqueuedUsbPrinters, scanNetworkPrinters } from './print/printer-registry';
 import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -182,6 +182,7 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
 
   ipcMain.handle('printers:list', () => guard(() => listPrinters()));
   ipcMain.handle('printers:scan', () => guard(() => scanNetworkPrinters()));
+  ipcMain.handle('printers:usb-hints', () => guard(() => listUnqueuedUsbPrinters()));
 
   ipcMain.handle('printers:set', (_e, station: unknown, printer: unknown) =>
     guard(() => {

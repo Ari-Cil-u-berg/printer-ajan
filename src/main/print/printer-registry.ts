@@ -1,6 +1,9 @@
 import os from 'node:os';
 import { probeNetworkPrinter } from './network-driver';
-import { listSpoolerPrinters } from './spooler-driver';
+import { listSpoolerPrinters, listUnqueuedUsbPrinters, type UsbPrinterHint } from './spooler-driver';
+
+export type { UsbPrinterHint };
+export { listUnqueuedUsbPrinters };
 
 export interface DiscoveredPrinter {
   kind: 'spooler' | 'network';
