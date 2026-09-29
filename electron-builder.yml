@@ -11,7 +11,8 @@ files:
 asar: true
 asarUnpack:
   # powershell.exe must read the script from disk — it cannot be inside the asar.
-  - dist/main/assets/**
+  # The main process must also rewrite app.asar → app.asar.unpacked (externalAssetPath).
+  - dist/main/assets/raw-print.ps1
 
 # macOS only; the hook returns immediately on Windows. See the script for why an
 # unsigned mac build still has to be ad-hoc signed to launch at all.

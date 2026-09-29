@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { assetPath } from '../assets';
+import { externalAssetPath } from '../assets';
 
 const run = promisify(execFile);
 const EXEC_TIMEOUT_MS = 20000;
@@ -45,7 +45,7 @@ async function printWindows(printerName: string, file: string): Promise<void> {
         '-NoProfile',
         '-NonInteractive',
         '-ExecutionPolicy', 'Bypass',
-        '-File', assetPath('raw-print.ps1'),
+        '-File', externalAssetPath('raw-print.ps1'),
         '-PrinterName', printerName,
         '-FilePath', file,
       ],
