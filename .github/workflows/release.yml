@@ -64,6 +64,15 @@ jobs:
           }
           Get-Content release/latest.yml
 
+      # electron-builder creates the GitHub Release with an empty body. The same
+      # build/release-notes.md is what it writes into latest.yml; this copies it
+      # onto the release so the description is visible on GitHub too.
+      - name: Set the release description
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "v$(node -p "require('./package.json').version")" --notes-file build/release-notes.md
+
   macos:
     # Windows, not test: the Windows job is what electron-builder's publish step
     # creates the GitHub Release with, and `gh release upload` below needs it to
