@@ -62,8 +62,25 @@ interface OkcSaleResult {
   code?: string;
 }
 
+type ConnState = 'OFFLINE' | 'CONNECTING' | 'CONNECTED' | 'UNPAIRED';
+
+/** Bir panel yazıcı kaydı, kendi koduyla eşleşmiş. `shared/types.ts` PairingView. */
+interface PairingView {
+  deviceId: string;
+  printerName: string;
+  stations: Station[];
+  tenantName: string;
+  branchName: string;
+  pairedAt: string;
+  local?: PrinterConfig;
+  legacyStationMap?: boolean;
+  connection: ConnState;
+  health?: { ok: boolean; checkedAt: string; error?: string };
+}
+
 interface StatusSnapshot {
-  connection: 'OFFLINE' | 'CONNECTING' | 'CONNECTED' | 'UNPAIRED';
+  pairings: PairingView[];
+  connection: ConnState;
   paired: boolean;
   tenantName?: string;
   branchName?: string;
@@ -132,9 +149,11 @@ interface OkcDiagnostics {
 interface AgentBridge {
   getStatus(): Promise<StatusSnapshot>;
   onStatus(cb: (s: StatusSnapshot) => void): void;
-  onUnauthorized(cb: () => void): void;
+  onUnauthorized(cb: (printerName?: string) => void): void;
   pair(code: string): Promise<Result<StatusSnapshot>>;
-  unpair(): Promise<Result<StatusSnapshot>>;
+  unpair(deviceId?: string): Promise<Result<StatusSnapshot>>;
+  setPairingPrinter(deviceId: string, printer: PrinterConfig | null): Promise<Result<StatusSnapshot>>;
+  testPairingPrint(deviceId: string): Promise<Result<boolean>>;
   listPrinters(): Promise<Result<DiscoveredPrinter[]>>;
   scanNetwork(): Promise<Result<DiscoveredPrinter[]>>;
   setPrinter(station: Station, printer: PrinterConfig | null): Promise<Result<StatusSnapshot>>;
@@ -248,6 +267,7 @@ function render(s: StatusSnapshot): void {
 
   renderMetrics(s);
   renderStatusPanel(s);
+  renderPairings(s);
   renderStations(s);
   renderOkc(s);
 }
@@ -263,15 +283,27 @@ function renderMetrics(s: StatusSnapshot): void {
   $('sQueue').textContent = String(s.queued);
   $('sQueue').className = `metric-value${s.queued > 0 ? ' warn' : ''}`;
 
-  const configured = STATIONS.filter((st) => s.printers[st]);
-  const healthy = configured.filter((st) => s.printerHealth[st]?.ok);
+  // Her eşleşme bir yazıcı; eski (istasyonlu) eşleşme ise istasyon başına.
+  const legacy = s.pairings.some((p) => p.legacyStationMap);
+  const modern = s.pairings.filter((p) => !p.legacyStationMap);
+  const legacyConfigured = legacy ? STATIONS.filter((st) => s.printers[st]) : [];
+  const configuredCount = modern.filter((p) => p.local).length + legacyConfigured.length;
+  const totalCount = modern.length + legacyConfigured.length;
+  const healthyCount =
+    modern.filter((p) => p.local && p.health?.ok).length +
+    legacyConfigured.filter((st) => s.printerHealth[st]?.ok).length;
+  const configured = { length: totalCount };
+  const healthy = { length: healthyCount };
   const printerEl = $('sPrinters');
-  if (configured.length === 0) {
+  if (totalCount === 0) {
     printerEl.textContent = 'Seçilmedi';
     printerEl.className = 'metric-value warn';
+  } else if (configuredCount < totalCount) {
+    printerEl.textContent = `${totalCount - configuredCount} yazıcı seçilmedi`;
+    printerEl.className = 'metric-value warn';
   } else {
-    printerEl.textContent = `${healthy.length}/${configured.length} hazır`;
-    printerEl.className = `metric-value ${healthy.length === configured.length ? 'ok' : 'bad'}`;
+    printerEl.textContent = `${healthyCount}/${totalCount} hazır`;
+    printerEl.className = `metric-value ${healthyCount === totalCount ? 'ok' : 'bad'}`;
   }
   navDot('navDotPrinters', configured.length === 0 ? 'warn' : healthy.length === configured.length ? 'ok' : 'bad');
 
@@ -664,32 +696,96 @@ $('okcCancelBtn').addEventListener('click', async () => {
 
 // --- yazıcılar -------------------------------------------------------------
 
+/**
+ * Bu bilgisayara bağlı yazıcı kayıtları.
+ *
+ * Panelde her yazıcının KENDİ kurulum kodu var ve sunucu bir fişi yalnızca o
+ * kodla eşleşmiş ajana veriyor. 0.3.21'e kadar ajan tek kod tutuyordu: kasada
+ * iki yazıcı olan bir kafede ikincinin kodunu girecek yer yoktu ve onun fişleri
+ * hiç basılmıyordu. Şimdi her kayıt ayrı bir kart, her kartın yerel yazıcısı ayrı.
+ */
+function renderPairings(s: StatusSnapshot): void {
+  const host = $('pairings');
+  host.innerHTML = '';
+  const modern = s.pairings.filter((p) => !p.legacyStationMap);
+  for (const pairing of modern) host.appendChild(pairingCard(pairing));
+  $('pairingsEmpty').classList.toggle('hidden', s.pairings.length > 0);
+}
+
+function pairingCard(p: PairingView): HTMLElement {
+  const stations = p.stations.map((st) => STATION_LABEL[st]).join(' · ');
+  const [connText, connCls] = STATE_TEXT[p.connection];
+  return printerCard({
+    title: p.printerName,
+    subtitle: `${stations || 'İstasyon yok'} · Sunucu: ${connText}`,
+    subtitleTone: connCls,
+    printer: p.local,
+    health: p.health,
+    onSave: (cfg) => bridge.setPairingPrinter(p.deviceId, cfg),
+    onTest: () => bridge.testPairingPrint(p.deviceId),
+    removeLabel: 'Bu yazıcıyı kaldır',
+    onRemove: async () => {
+      if (!confirm(`"${p.printerName}" bu bilgisayardan kaldırılsın mı? Fişleri buraya gelmez; tekrar eklemek için panelden yeni kod gerekir.`)) {
+        return { ok: true, data: currentStatus as StatusSnapshot };
+      }
+      return bridge.unpair(p.deviceId);
+    },
+    clearSelection: () => bridge.setPairingPrinter(p.deviceId, null),
+  });
+}
+
+/** Yalnızca 0.3.21'den taşınan eşleşme için: istasyona göre eski eşleme. */
 function renderStations(s: StatusSnapshot): void {
+  const legacy = s.pairings.find((p) => p.legacyStationMap);
+  $('legacyStations').classList.toggle('hidden', !legacy);
   const host = $('stations');
   host.innerHTML = '';
+  if (!legacy) return;
+  $('legacyName').textContent = legacy.printerName;
   for (const station of STATIONS) {
-    host.appendChild(stationCard(station, s.printers[station], s.printerHealth[station]));
+    host.appendChild(
+      printerCard({
+        title: `${STATION_LABEL[station]} yazıcısı`,
+        printer: s.printers[station],
+        health: s.printerHealth[station],
+        onSave: (cfg) => bridge.setPrinter(station, cfg),
+        onTest: () => bridge.testPrint(station),
+        removeLabel: 'Kaldır',
+        onRemove: () => bridge.setPrinter(station, null),
+      }),
+    );
   }
 }
 
-function stationCard(
-  station: Station,
-  printer: PrinterConfig | undefined,
-  health: { ok: boolean; error?: string } | undefined,
-): HTMLElement {
+interface PrinterCardOptions {
+  title: string;
+  subtitle?: string;
+  subtitleTone?: string;
+  printer: PrinterConfig | undefined;
+  health: { ok: boolean; error?: string } | undefined;
+  onSave(cfg: PrinterConfig): Promise<Result<StatusSnapshot>>;
+  onTest(): Promise<Result<boolean>>;
+  removeLabel: string;
+  onRemove(): Promise<Result<StatusSnapshot>>;
+  /** Yerel seçimi temizler ama eşleşmeyi bırakır. */
+  clearSelection?(): Promise<Result<StatusSnapshot>>;
+}
+
+function printerCard(o: PrinterCardOptions): HTMLElement {
+  const { printer, health } = o;
   const card = document.createElement('div');
   card.className = 'station';
 
   const title = document.createElement('h3');
-  title.append(document.createTextNode(`${STATION_LABEL[station]} yazıcısı`));
+  title.append(document.createTextNode(o.title));
 
   const badge = document.createElement('span');
   badge.className = 'badge';
   const badgeDot = document.createElement('span');
   const badgeText = document.createElement('span');
   if (!printer) {
-    badgeDot.className = 'dot';
-    badgeText.textContent = 'Seçilmedi';
+    badgeDot.className = 'dot warn';
+    badgeText.textContent = 'Yazıcı seçilmedi';
   } else if (!health) {
     badgeDot.className = 'dot warn';
     badgeText.textContent = 'Denetleniyor…';
@@ -703,6 +799,13 @@ function stationCard(
   badge.append(badgeDot, badgeText);
   title.appendChild(badge);
   card.appendChild(title);
+
+  if (o.subtitle) {
+    const sub = document.createElement('p');
+    sub.className = `help${o.subtitleTone ? ` ${o.subtitleTone}` : ''}`;
+    sub.textContent = o.subtitle;
+    card.appendChild(sub);
+  }
 
   const grid = document.createElement('div');
   grid.className = 'grid';
@@ -787,7 +890,7 @@ function stationCard(
       typeSelect.value === 'network'
         ? { kind: 'network' as const, host: hostInput.value.trim(), port: Number(portInput.value) || 9100 }
         : { kind: 'spooler' as const, printerName: spoolSelect.value };
-    const res = await bridge.setPrinter(station, {
+    const res = await o.onSave({
       target,
       codepage: cpSelect.value,
       width: Number(widthSelect.value) as 32 | 42 | 48,
@@ -801,26 +904,39 @@ function stationCard(
   testBtn.addEventListener('click', async () => {
     testBtn.disabled = true;
     setMsg(msg, 'Gönderiliyor…');
-    const res = await bridge.testPrint(station);
+    const res = await o.onTest();
     testBtn.disabled = false;
     setMsg(
       msg,
-      res.ok ? 'Test fişi gönderildi. Türkçe harfleri kontrol edin.' : res.error,
+      res.ok ? 'Test fişi gönderildi. Fişte bu yazıcının adı yazmalı; Türkçe harfleri kontrol edin.' : res.error,
       res.ok ? 'ok' : 'bad',
     );
   });
 
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'ghost danger';
-  clearBtn.textContent = 'Kaldır';
-  clearBtn.addEventListener('click', async () => {
-    const res = await bridge.setPrinter(station, null);
-    if (!res.ok) setMsg(msg, res.error, 'bad');
-  });
-
   const row = document.createElement('div');
   row.className = 'row';
-  row.append(saveBtn, testBtn, clearBtn);
+  row.append(saveBtn, testBtn);
+
+  if (o.clearSelection && printer) {
+    const clearSel = document.createElement('button');
+    clearSel.className = 'ghost';
+    clearSel.textContent = 'Seçimi temizle';
+    clearSel.addEventListener('click', async () => {
+      const res = await o.clearSelection!();
+      if (!res.ok) setMsg(msg, res.error, 'bad');
+    });
+    row.append(clearSel);
+  }
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'ghost danger';
+  removeBtn.textContent = o.removeLabel;
+  removeBtn.addEventListener('click', async () => {
+    const res = await o.onRemove();
+    if (!res.ok) setMsg(msg, res.error, 'bad');
+  });
+  row.append(removeBtn);
+
   card.append(row, msg);
   return card;
 }
@@ -917,7 +1033,10 @@ async function refreshPrinters(): Promise<void> {
   const res = await bridge.listPrinters();
   if (res.ok) {
     discovered = res.data;
-    if (currentStatus) renderStations(currentStatus);
+    if (currentStatus) {
+      renderPairings(currentStatus);
+      renderStations(currentStatus);
+    }
   }
 }
 
@@ -933,6 +1052,8 @@ $('pairBtn').addEventListener('click', async () => {
     input.value = '';
     setMsg(msg, '');
     render(res.data);
+    // İlk yazıcı eklendi: bu bilgisayardaki yazıcısını seçmek bir sonraki adım.
+    showPanel('printers');
   } else {
     setMsg(msg, res.error, 'bad');
   }
@@ -943,8 +1064,29 @@ $('code').addEventListener('keydown', (e) => {
 });
 
 $('unpairBtn').addEventListener('click', async () => {
+  if (!confirm('Bu bilgisayardaki TÜM yazıcılar kafeden ayrılsın mı? Tekrar bağlamak için her yazıcıya panelden yeni kod gerekir.')) return;
   const res = await bridge.unpair();
   if (res.ok) render(res.data);
+});
+
+/** Bir yazıcı daha ekle — panelde her yazıcının kendi kurulum kodu var. */
+$('addPairBtn').addEventListener('click', async () => {
+  const input = $<HTMLInputElement>('addCode');
+  const btn = $<HTMLButtonElement>('addPairBtn');
+  const msg = $('addPairMsg');
+  btn.disabled = true;
+  setMsg(msg, 'Ekleniyor…');
+  const res = await bridge.pair(input.value);
+  btn.disabled = false;
+  if (!res.ok) return setMsg(msg, res.error, 'bad');
+  input.value = '';
+  const added = res.data.pairings[res.data.pairings.length - 1];
+  setMsg(msg, added ? `"${added.printerName}" eklendi. Aşağıdan bu bilgisayardaki yazıcısını seçin.` : 'Eklendi.', 'ok');
+  render(res.data);
+});
+
+$('addCode').addEventListener('keydown', (e) => {
+  if ((e as KeyboardEvent).key === 'Enter') $('addPairBtn').click();
 });
 
 $('refreshBtn').addEventListener('click', () => void refreshPrinters());
@@ -1078,8 +1220,12 @@ function renderUpdate(u: UpdateStatus): void {
 bridge.onLogs(appendLogs);
 bridge.onStatus(render);
 bridge.onUpdate(renderUpdate);
-bridge.onUnauthorized(() => {
-  setMsg($('pairMsg'), 'Bu cihazın yetkisi kaldırıldı. Panelden yeni bir kod alıp tekrar bağlayın.', 'bad');
+bridge.onUnauthorized((printerName) => {
+  const text = printerName
+    ? `"${printerName}" yazıcısının yetkisi panelden kaldırıldı. Tekrar eklemek için panelden yeni kod alın.`
+    : 'Bu cihazın yetkisi kaldırıldı. Panelden yeni bir kod alıp tekrar bağlayın.';
+  setMsg($('pairMsg'), text, 'bad');
+  setMsg($('addPairMsg'), text, 'bad');
 });
 
 void (async () => {

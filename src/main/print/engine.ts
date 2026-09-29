@@ -1,29 +1,36 @@
-import type { PrintJob, PrinterConfig, Station } from '../../shared/types';
+import type { PrintJob, PrinterConfig } from '../../shared/types';
 import { log } from '../logger';
 import { EscPosBuilder, renderTestTicket, renderTicket } from './escpos';
 import { printOverNetwork, probeNetworkPrinter } from './network-driver';
 import { printViaSpooler, probeSpoolerPrinter } from './spooler-driver';
 
 export class PrinterNotConfiguredError extends Error {
-  constructor(station: Station) {
-    super(`${station} istasyonu için yazıcı seçilmemiş`);
+  constructor(what: string) {
+    super(`${what} için bu bilgisayarda yazıcı seçilmemiş`);
     this.name = 'PrinterNotConfiguredError';
   }
 }
 
+/**
+ * Resolves the local printer for a job — by the pairing that delivered it, or
+ * by station for a pairing migrated from ≤0.3.21 — and returns a label for the
+ * error when there is none.
+ */
+export type PrinterResolver = (job: PrintJob) => { printer: PrinterConfig | undefined; label: string };
+
 export class PrintEngine {
-  constructor(private readonly getPrinter: (station: Station) => PrinterConfig | undefined) {}
+  constructor(private readonly resolve: PrinterResolver) {}
 
   async print(job: PrintJob): Promise<void> {
-    const printer = this.getPrinter(job.station);
-    if (!printer) throw new PrinterNotConfiguredError(job.station);
+    const { printer, label } = this.resolve(job);
+    if (!printer) throw new PrinterNotConfiguredError(label);
 
     const bytes = this.renderJob(job, printer);
     const copies = Math.max(1, Math.min(job.copies || 1, 5));
     for (let i = 0; i < copies; i++) {
       await this.send(printer, bytes);
     }
-    log.info('printed', { jobId: job.jobId, station: job.station, copies, bytes: bytes.length });
+    log.info('printed', { jobId: job.jobId, station: job.station, route: job.route, copies, bytes: bytes.length });
   }
 
   private renderJob(job: PrintJob, printer: PrinterConfig): Buffer {
@@ -37,10 +44,9 @@ export class PrintEngine {
     throw new Error(`İş içeriği boş (${job.jobId})`);
   }
 
-  async testPrint(station: Station): Promise<void> {
-    const printer = this.getPrinter(station);
-    if (!printer) throw new PrinterNotConfiguredError(station);
-    const heading = { BAR: 'BAR', KITCHEN: 'MUTFAK', CASHIER: 'KASA' }[station];
+  /** `heading` is what the test slip says it is for — "MUTFAK YAZICI" — so it can be matched to the panel. */
+  async testPrint(printer: PrinterConfig | undefined, heading: string): Promise<void> {
+    if (!printer) throw new PrinterNotConfiguredError(heading);
     await this.send(printer, renderTestTicket(printer, heading));
   }
 
@@ -52,8 +58,7 @@ export class PrintEngine {
     }
   }
 
-  async probe(station: Station): Promise<{ ok: boolean; error?: string }> {
-    const printer = this.getPrinter(station);
+  async probe(printer: PrinterConfig | undefined): Promise<{ ok: boolean; error?: string }> {
     if (!printer) return { ok: false, error: 'Yazıcı seçilmemiş' };
     try {
       const ok =

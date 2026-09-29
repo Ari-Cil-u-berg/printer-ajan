@@ -60,9 +60,9 @@ async function main(): Promise<void> {
     updateTray(status);
     window?.webContents.send('status', status);
   });
-  agent.on('unauthorized', () => {
+  agent.on('unauthorized', (printerName?: string) => {
     showWindow();
-    window?.webContents.send('unauthorized');
+    window?.webContents.send('unauthorized', printerName);
   });
 
   createTray();

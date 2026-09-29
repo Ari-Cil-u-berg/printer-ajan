@@ -10,9 +10,10 @@ import { log } from './logger';
 export { atomicWrite };
 
 /**
- * Two files in userData:
- *   config.json   — plaintext, non-secret (printer map, urls, pairing context)
- *   device.token  — safeStorage-encrypted device token (OS keychain-backed)
+ * Files in userData:
+ *   config.json            — plaintext, non-secret (pairings, printer map, urls)
+ *   tokens/<deviceId>.token — one safeStorage-encrypted token PER printer pairing
+ *   device.token           — ≤0.3.21 single token; moved into tokens/ on load
  *
  * Writes are atomic (tmp + rename) so a crash mid-write can't corrupt config.
  */
@@ -24,6 +25,7 @@ function defaults(): AgentConfig {
     wsUrl: env.wsUrl,
     deviceName: os.hostname(),
     printers: {},
+    pairings: [],
     autostart: true,
   };
 }
@@ -31,7 +33,9 @@ function defaults(): AgentConfig {
 export class ConfigStore {
   private readonly dir: string;
   private readonly configPath: string;
-  private readonly tokenPath: string;
+  /** ≤0.3.21 location of the single device token. */
+  private readonly legacyTokenPath: string;
+  private readonly tokenDir: string;
   /**
    * Köprü anahtarı AYRI DOSYADA.
    *
@@ -45,10 +49,65 @@ export class ConfigStore {
   constructor(dir = app.getPath('userData')) {
     this.dir = dir;
     this.configPath = path.join(dir, 'config.json');
-    this.tokenPath = path.join(dir, 'device.token');
+    this.legacyTokenPath = path.join(dir, 'device.token');
+    this.tokenDir = path.join(dir, 'tokens');
     this.bridgeKeyPath = path.join(dir, 'bridge.key');
     fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(this.tokenDir, { recursive: true });
     this.config = this.load();
+    this.migrateSinglePairing();
+  }
+
+  /**
+   * ≤0.3.21 → multi-pairing, once, on the first start after the update.
+   *
+   * The encrypted token bytes are MOVED, not re-encrypted: same keychain, same
+   * bytes, no plaintext in between. The pairing keeps routing by station
+   * (`legacyStationMap`) so the café's existing printer map keeps working
+   * without anyone opening the window. Its pending acks move with it.
+   */
+  private migrateSinglePairing(): void {
+    const legacy = this.config.pairing;
+    if (!legacy || this.config.pairings.length > 0) return;
+    if (!fs.existsSync(this.legacyTokenPath)) {
+      this.update({ pairing: undefined });
+      return;
+    }
+    try {
+      fs.renameSync(this.legacyTokenPath, this.tokenFile(legacy.deviceId));
+      const oldOutbox = path.join(this.dir, 'ack-outbox.json');
+      if (fs.existsSync(oldOutbox)) {
+        fs.renameSync(oldOutbox, path.join(this.dir, `ack-outbox-${legacy.deviceId}.json`));
+      }
+    } catch (err) {
+      log.warn('pairing migration: token move failed', err);
+      return;
+    }
+    this.update({
+      pairing: undefined,
+      pairings: [
+        {
+          deviceId: legacy.deviceId,
+          printerName: legacy.printerName ?? legacy.branchName ?? 'Yazıcı',
+          stations: [],
+          tenantId: legacy.tenantId,
+          branchId: legacy.branchId,
+          tenantName: legacy.tenantName,
+          branchName: legacy.branchName,
+          pairedAt: new Date().toISOString(),
+          legacyStationMap: true,
+        },
+      ],
+    });
+    log.info('migrated single pairing to multi-pairing', { deviceId: legacy.deviceId });
+  }
+
+  private tokenFile(deviceId: string): string {
+    // deviceId comes from our own server, but it becomes a file name: keep it to
+    // the characters an id is made of, so it can never walk out of tokens/.
+    const safe = deviceId.replace(/[^A-Za-z0-9_-]/g, '');
+    if (!safe) throw new Error('Geçersiz cihaz kimliği');
+    return path.join(this.tokenDir, `${safe}.token`);
   }
 
   private load(): AgentConfig {
@@ -63,6 +122,7 @@ export class ConfigStore {
         apiBaseUrl: base.apiBaseUrl,
         wsUrl: base.wsUrl,
         printers: raw.printers ?? {},
+        pairings: Array.isArray(raw.pairings) ? raw.pairings : [],
       };
     } catch {
       return base;
@@ -79,38 +139,40 @@ export class ConfigStore {
     return this.config;
   }
 
-  // --- device token -------------------------------------------------------
+  // --- device tokens (one per printer pairing) --------------------------
 
-  setToken(token: string): void {
+  setToken(deviceId: string, token: string): void {
     if (safeStorage.isEncryptionAvailable()) {
-      atomicWrite(this.tokenPath, safeStorage.encryptString(token));
+      atomicWrite(this.tokenFile(deviceId), safeStorage.encryptString(token));
+      this.volatileTokens.delete(deviceId);
     } else {
       // No OS keychain (e.g. fresh Linux session). Refuse to persist in the clear.
       log.warn('safeStorage unavailable — device token kept in memory only');
-      this.volatileToken = token;
+      this.volatileTokens.set(deviceId, token);
     }
   }
 
-  private volatileToken: string | null = null;
+  private readonly volatileTokens = new Map<string, string>();
 
-  getToken(): string | null {
-    if (this.volatileToken) return this.volatileToken;
+  getToken(deviceId: string): string | null {
+    const volatile = this.volatileTokens.get(deviceId);
+    if (volatile) return volatile;
     try {
-      const buf = fs.readFileSync(this.tokenPath);
-      return safeStorage.decryptString(buf);
+      return safeStorage.decryptString(fs.readFileSync(this.tokenFile(deviceId)));
     } catch {
       return null;
     }
   }
 
-  clearToken(): void {
-    this.volatileToken = null;
+  /** Forgets one pairing: its token and its row. The others keep printing. */
+  removePairing(deviceId: string): void {
+    this.volatileTokens.delete(deviceId);
     try {
-      fs.rmSync(this.tokenPath, { force: true });
+      fs.rmSync(this.tokenFile(deviceId), { force: true });
     } catch {
       /* already gone */
     }
-    this.update({ pairing: undefined });
+    this.update({ pairings: this.config.pairings.filter((p) => p.deviceId !== deviceId) });
   }
 
   // --- köprü anahtarı -----------------------------------------------------
@@ -149,7 +211,7 @@ export class ConfigStore {
   }
 
   isPaired(): boolean {
-    return this.getToken() !== null;
+    return this.config.pairings.length > 0;
   }
 
   dataDir(): string {

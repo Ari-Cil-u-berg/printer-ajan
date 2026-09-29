@@ -17,11 +17,16 @@ const api = {
   onStatus: (cb: (status: StatusSnapshot) => void): void => {
     ipcRenderer.on('status', (_e, status: StatusSnapshot) => cb(status));
   },
-  onUnauthorized: (cb: () => void): void => {
-    ipcRenderer.on('unauthorized', () => cb());
+  /** Carries the name of the printer whose pairing was revoked. */
+  onUnauthorized: (cb: (printerName?: string) => void): void => {
+    ipcRenderer.on('unauthorized', (_e, printerName?: string) => cb(printerName));
   },
   pair: (code: string) => ipcRenderer.invoke('pair', code),
-  unpair: () => ipcRenderer.invoke('unpair'),
+  /** No id → remove every printer pairing. */
+  unpair: (deviceId?: string) => ipcRenderer.invoke('unpair', deviceId ?? null),
+  setPairingPrinter: (deviceId: string, printer: PrinterConfig | null) =>
+    ipcRenderer.invoke('pairings:setPrinter', deviceId, printer),
+  testPairingPrint: (deviceId: string) => ipcRenderer.invoke('pairings:test', deviceId),
   listPrinters: () => ipcRenderer.invoke('printers:list'),
   scanNetwork: () => ipcRenderer.invoke('printers:scan'),
   setPrinter: (station: Station, printer: PrinterConfig | null) =>

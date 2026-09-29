@@ -75,6 +75,30 @@ test('stations drain independently — a stuck BAR printer does not block KITCHE
   q.stop();
 });
 
+test('two printers on the same station drain independently — a stuck sıcak mutfak does not block soğuk mutfak', async () => {
+  const dir = tmpDir();
+  const printed = [];
+  const acked = [];
+  let hotFails = true;
+  const q = new JobQueue(dir, async (j) => {
+    if (j.route === 'hot' && hotFails) throw new Error('hot kitchen offline');
+    printed.push(j.jobId);
+  });
+  q.on('ack', (a, j) => acked.push([a.jobId, j.route]));
+  q.start();
+  q.enqueue({ ...job('hot-1', 'KITCHEN'), route: 'hot' });
+  q.enqueue({ ...job('cold-1', 'KITCHEN'), route: 'cold' });
+
+  await waitFor(() => printed.includes('cold-1'));
+  assert.ok(!printed.includes('hot-1'));
+  // The ack carries its job, so it can go back on the right pairing's socket.
+  assert.deepEqual(acked, [['cold-1', 'cold']]);
+
+  hotFails = false;
+  await waitFor(() => printed.includes('hot-1'), 8000);
+  q.stop();
+});
+
 test('redelivered jobId is not printed twice', async () => {
   const dir = tmpDir();
   const printed = [];

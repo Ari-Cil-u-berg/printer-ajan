@@ -24,6 +24,12 @@ export interface ConnectionOptions {
   deviceInfo: DeviceInfo;
   dataDir: string;
   queuedCount: () => number;
+  /**
+   * Where un-sent acks survive a restart. One file per pairing: an ack must go
+   * back on the socket of the printer record that delivered the job, and a
+   * shared file would replay kasa acks on the mutfak socket.
+   */
+  outboxName?: string;
 }
 
 /**
@@ -43,7 +49,7 @@ export class ConnectionManager extends EventEmitter {
 
   constructor(private readonly opts: ConnectionOptions) {
     super();
-    this.outboxPath = path.join(opts.dataDir, 'ack-outbox.json');
+    this.outboxPath = path.join(opts.dataDir, opts.outboxName ?? 'ack-outbox.json');
     this.outbox = this.loadOutbox();
   }
 

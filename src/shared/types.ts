@@ -94,6 +94,13 @@ export interface PrintJob {
   escpos?: string; // base64 pre-rendered bytes (preferred)
   content?: TicketModel; // structured fallback
   codepage?: string; // overrides printer config
+  /**
+   * Which pairing delivered the job — its `deviceId`. Stamped LOCALLY on
+   * receipt, never read off the wire: it decides which printer the ticket goes
+   * to and which socket the ack goes back on. Absent on jobs queued by ≤0.3.21,
+   * which route by station as they always did.
+   */
+  route?: string;
 }
 
 export interface JobAck {
@@ -151,14 +158,50 @@ export interface PairResponse {
   branchId: string;
   tenantName: string;
   branchName: string;
+  /** The printer record the code belonged to. Absent from servers before 2026-09-29. */
+  printerName?: string;
+  stations?: string[];
+}
+
+/**
+ * ONE PRINTER RECORD FROM THE PANEL, PAIRED WITH ITS OWN CODE.
+ *
+ * The panel issues a code per printer, and the backend hands a job only to the
+ * agent paired with THAT printer's code. Up to 0.3.21 the agent held a single
+ * pairing, so on a till with a kasa and a mutfak printer only one of them ever
+ * received tickets — the other printer's code had nowhere to go. Now each
+ * pairing has its own token, its own socket and its own local printer, and two
+ * printers on the same station (sıcak / soğuk mutfak) stay distinct.
+ */
+export interface PrinterPairing {
+  deviceId: string;
+  /** "Mutfak Yazıcı" — the name on the panel, so the operator can match them. */
+  printerName: string;
+  stations: Station[];
+  tenantId: string;
+  branchId: string;
+  tenantName: string;
+  branchName: string;
+  pairedAt: string;
+  /** The printer on THIS computer that this record prints to. */
+  local?: PrinterConfig;
+  /**
+   * Migrated from a ≤0.3.21 single pairing. It keeps routing by station
+   * through `AgentConfig.printers`, exactly as it did before the upgrade — a
+   * café that updates overnight must not open to a silent kitchen.
+   */
+  legacyStationMap?: boolean;
 }
 
 export interface AgentConfig {
   apiBaseUrl: string;
   wsUrl: string;
   deviceName: string;
+  /** Station → local printer. Used only by a pairing migrated from ≤0.3.21. */
   printers: Partial<Record<Station, PrinterConfig>>;
+  /** ≤0.3.21 single pairing. Read once on load and migrated into `pairings`. */
   pairing?: Omit<PairResponse, 'deviceToken'>;
+  pairings: PrinterPairing[];
   autostart: boolean;
   /** Kablolu yazarkasa (Hugin PC Link). Tanımlı değilse ÖKC yolu kapalıdır. */
   okc?: OkcConfig;
@@ -357,8 +400,14 @@ export interface OkcSaleResult {
   code?: string;
 }
 
+export interface PairingView extends PrinterPairing {
+  connection: ConnectionState;
+  health?: { ok: boolean; checkedAt: string; error?: string };
+}
+
 /** What the settings window renders. */
 export interface StatusSnapshot {
+  pairings: PairingView[];
   connection: ConnectionState;
   paired: boolean;
   tenantName?: string;

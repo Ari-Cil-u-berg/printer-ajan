@@ -31,8 +31,18 @@ function backoffMs(attempts: number): number {
   return base + Math.random() * Math.min(base, 5000);
 }
 
+/**
+ * The lane a job waits in. One lane per pairing (printer record), so two
+ * printers on the same station drain independently and in their own order;
+ * jobs queued before pairings existed keep their station lane.
+ */
+export function laneOf(job: PrintJob): string {
+  return job.route ?? job.station;
+}
+
 export interface JobQueueEvents {
-  ack: (ack: JobAck) => void;
+  /** The job rides along so the caller can send the ack on the right socket. */
+  ack: (ack: JobAck, job: PrintJob) => void;
   changed: () => void;
   failure: (job: PrintJob, error: string) => void;
 }
@@ -44,8 +54,8 @@ export interface JobQueueEvents {
 export class JobQueue extends EventEmitter {
   private readonly file: string;
   private state: QueueFile;
-  private readonly running = new Set<Station>();
-  private readonly timers = new Map<Station, NodeJS.Timeout>();
+  private readonly running = new Set<string>();
+  private readonly timers = new Map<string, NodeJS.Timeout>();
   private stopped = false;
 
   constructor(
@@ -82,7 +92,7 @@ export class JobQueue extends EventEmitter {
   enqueue(job: PrintJob): boolean {
     if (this.state.done.some((d) => d.jobId === job.jobId)) {
       log.info('duplicate job ignored (already printed)', { jobId: job.jobId });
-      this.emit('ack', { jobId: job.jobId, status: 'printed', attempts: 0 });
+      this.emit('ack', { jobId: job.jobId, status: 'printed', attempts: 0 }, job);
       return false;
     }
     if (this.state.entries.some((e) => e.job.jobId === job.jobId)) {
@@ -91,7 +101,7 @@ export class JobQueue extends EventEmitter {
     }
     this.state.entries.push({ job, attempts: 0, nextAttemptAt: 0, receivedAt: Date.now() });
     this.persist();
-    this.pump(job.station);
+    this.pump(laneOf(job));
     return true;
   }
 
@@ -103,9 +113,11 @@ export class JobQueue extends EventEmitter {
     return this.state.entries.filter((e) => e.job.station === station).length;
   }
 
-  /** Kick every station — call on reconnect and after a printer setting changes. */
+  /** Kick every lane — call on reconnect and after a printer setting changes. */
   pumpAll(): void {
-    for (const station of STATIONS) this.pump(station);
+    const lanes = new Set<string>(STATIONS);
+    for (const entry of this.state.entries) lanes.add(laneOf(entry.job));
+    for (const lane of lanes) this.pump(lane);
   }
 
   start(): void {
@@ -119,30 +131,30 @@ export class JobQueue extends EventEmitter {
     this.timers.clear();
   }
 
-  private schedule(station: Station, delay: number): void {
-    const existing = this.timers.get(station);
+  private schedule(lane: string, delay: number): void {
+    const existing = this.timers.get(lane);
     if (existing) clearTimeout(existing);
     this.timers.set(
-      station,
+      lane,
       setTimeout(() => {
-        this.timers.delete(station);
-        this.pump(station);
+        this.timers.delete(lane);
+        this.pump(lane);
       }, delay),
     );
   }
 
-  /** One worker per station keeps tickets in receive order within that station. */
-  private async pump(station: Station): Promise<void> {
-    if (this.stopped || this.running.has(station)) return;
-    this.running.add(station);
+  /** One worker per lane keeps tickets in receive order within that printer. */
+  private async pump(lane: string): Promise<void> {
+    if (this.stopped || this.running.has(lane)) return;
+    this.running.add(lane);
     try {
       for (;;) {
-        const head = this.state.entries.find((e) => e.job.station === station);
+        const head = this.state.entries.find((e) => laneOf(e.job) === lane);
         if (!head) return;
 
         const wait = head.nextAttemptAt - Date.now();
         if (wait > 0) {
-          this.schedule(station, wait);
+          this.schedule(lane, wait);
           return;
         }
 
@@ -152,7 +164,7 @@ export class JobQueue extends EventEmitter {
           this.remove(head.job.jobId);
           this.state.done.push({ jobId: head.job.jobId, at: Date.now() });
           this.persist();
-          this.emit('ack', { jobId: head.job.jobId, status: 'printed', attempts: head.attempts });
+          this.emit('ack', { jobId: head.job.jobId, status: 'printed', attempts: head.attempts }, head.job);
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
           log.warn('print failed', { jobId: head.job.jobId, attempts: head.attempts, error });
@@ -162,19 +174,19 @@ export class JobQueue extends EventEmitter {
             this.remove(head.job.jobId);
             this.state.done.push({ jobId: head.job.jobId, at: Date.now() });
             this.persist();
-            this.emit('ack', { jobId: head.job.jobId, status: 'failed', error, attempts: head.attempts });
+            this.emit('ack', { jobId: head.job.jobId, status: 'failed', error, attempts: head.attempts }, head.job);
             continue; // head-of-line job given up on; move to the next ticket
           }
 
           const delay = backoffMs(head.attempts);
           head.nextAttemptAt = Date.now() + delay;
           this.persist();
-          this.schedule(station, delay);
+          this.schedule(lane, delay);
           return;
         }
       }
     } finally {
-      this.running.delete(station);
+      this.running.delete(lane);
     }
   }
 

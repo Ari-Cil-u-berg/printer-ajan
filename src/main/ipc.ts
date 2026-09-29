@@ -35,6 +35,11 @@ function assertStation(value: unknown): Station {
   throw new Error('Geçersiz istasyon');
 }
 
+function assertDeviceId(value: unknown): string {
+  if (typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value)) return value;
+  throw new Error('Geçersiz yazıcı');
+}
+
 function assertPrinter(value: unknown): PrinterConfig {
   const p = value as PrinterConfig;
   if (!p || typeof p !== 'object') throw new Error('Geçersiz yazıcı ayarı');
@@ -153,7 +158,27 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
     }),
   );
 
-  ipcMain.handle('unpair', () => guard(() => { agent.unpair(); return agent.status(); }));
+  /** No id = remove every printer (the "kafe bağlantısını kaldır" button). */
+  ipcMain.handle('unpair', (_e, deviceId: unknown) =>
+    guard(() => {
+      agent.unpair(deviceId === undefined || deviceId === null ? undefined : assertDeviceId(deviceId));
+      return agent.status();
+    }),
+  );
+
+  ipcMain.handle('pairings:setPrinter', (_e, deviceId: unknown, printer: unknown) =>
+    guard(() => {
+      agent.setPairingPrinter(assertDeviceId(deviceId), printer === null ? undefined : assertPrinter(printer));
+      return agent.status();
+    }),
+  );
+
+  ipcMain.handle('pairings:test', (_e, deviceId: unknown) =>
+    guard(async () => {
+      await agent.testPairingPrint(assertDeviceId(deviceId));
+      return true;
+    }),
+  );
 
   ipcMain.handle('printers:list', () => guard(() => listPrinters()));
   ipcMain.handle('printers:scan', () => guard(() => scanNetworkPrinters()));

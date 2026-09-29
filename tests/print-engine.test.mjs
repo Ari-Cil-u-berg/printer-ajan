@@ -26,6 +26,9 @@ const config = (port) => ({
   cut: true,
 });
 
+/** The engine now resolves a printer per JOB (by pairing), not per station. */
+const resolved = (printer) => () => ({ printer, label: 'Mutfak Yazıcı' });
+
 const waitFor = (fn, ms = 3000) =>
   new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -35,7 +38,7 @@ const waitFor = (fn, ms = 3000) =>
 
 test('structured ticket reaches the printer as ESC/POS with the code page selected', async () => {
   const printer = await fakePrinter();
-  const engine = new PrintEngine(() => config(printer.port));
+  const engine = new PrintEngine(resolved(config(printer.port)));
 
   await engine.print({
     jobId: 'j1',
@@ -60,7 +63,7 @@ test('structured ticket reaches the printer as ESC/POS with the code page select
 
 test('backend-rendered escpos is prefixed with the printer\'s own code page', async () => {
   const printer = await fakePrinter();
-  const engine = new PrintEngine(() => ({ ...config(printer.port), codepage: 'ISO8859_9' }));
+  const engine = new PrintEngine(resolved({ ...config(printer.port), codepage: 'ISO8859_9' }));
 
   const payload = Buffer.from('HELLO\n', 'latin1').toString('base64');
   await engine.print({ jobId: 'j2', station: 'BAR', copies: 1, escpos: payload });
@@ -74,14 +77,14 @@ test('backend-rendered escpos is prefixed with the printer\'s own code page', as
 
 test('copies are sent once each', async () => {
   const printer = await fakePrinter();
-  const engine = new PrintEngine(() => config(printer.port));
+  const engine = new PrintEngine(resolved(config(printer.port)));
   await engine.print({ jobId: 'j3', station: 'BAR', copies: 3, escpos: Buffer.from('X').toString('base64') });
   await waitFor(() => printer.received.length === 3);
   await printer.stop();
 });
 
 test('an unconfigured station fails with a message the cashier can act on', async () => {
-  const engine = new PrintEngine(() => undefined);
+  const engine = new PrintEngine(resolved(undefined));
   await assert.rejects(
     () => engine.print({ jobId: 'j4', station: 'KITCHEN', copies: 1, escpos: 'AA==' }),
     /yazıcı seçilmemiş/i,
@@ -92,18 +95,43 @@ test('an unreachable printer surfaces a Turkish error instead of hanging', async
   const printer = await fakePrinter();
   const port = printer.port;
   await printer.stop(); // nothing is listening now
-  const engine = new PrintEngine(() => config(port));
+  const engine = new PrintEngine(resolved(config(port)));
   await assert.rejects(
     () => engine.print({ jobId: 'j5', station: 'BAR', copies: 1, escpos: 'AA==' }),
     /bağlanılamadı/i,
   );
 });
 
+test('the unconfigured error names the printer record, not just the station', async () => {
+  const engine = new PrintEngine(resolved(undefined));
+  await assert.rejects(
+    () => engine.print({ jobId: 'j6', station: 'KITCHEN', copies: 1, escpos: 'AA==', route: 'dev-1' }),
+    /Mutfak Yazıcı/,
+  );
+});
+
+test('each job goes to the printer of the pairing that delivered it', async () => {
+  const kitchenA = await fakePrinter();
+  const kitchenB = await fakePrinter();
+  const byRoute = { hot: config(kitchenA.port), cold: config(kitchenB.port) };
+  const engine = new PrintEngine((job) => ({ printer: byRoute[job.route], label: job.route }));
+
+  // Same station, two printers: routing is by pairing id, never by station.
+  await engine.print({ jobId: 'a', station: 'KITCHEN', copies: 1, escpos: 'QQ==', route: 'hot' });
+  await engine.print({ jobId: 'b', station: 'KITCHEN', copies: 1, escpos: 'Qg==', route: 'cold' });
+  await waitFor(() => kitchenA.received.length === 1 && kitchenB.received.length === 1);
+  assert.ok(kitchenA.received[0].toString('latin1').endsWith('A'));
+  assert.ok(kitchenB.received[0].toString('latin1').endsWith('B'));
+  await kitchenA.stop();
+  await kitchenB.stop();
+});
+
 test('probe reports reachability', async () => {
   const printer = await fakePrinter();
-  const engine = new PrintEngine(() => config(printer.port));
-  assert.deepEqual(await engine.probe('BAR'), { ok: true });
+  const engine = new PrintEngine(resolved(config(printer.port)));
+  const target = config(printer.port);
+  assert.deepEqual(await engine.probe(target), { ok: true });
   await printer.stop();
-  const down = await engine.probe('BAR');
+  const down = await engine.probe(target);
   assert.equal(down.ok, false);
 });

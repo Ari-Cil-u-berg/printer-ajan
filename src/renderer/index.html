@@ -25,8 +25,10 @@
         </div>
         <h1>Kafenize bağlayın</h1>
         <p class="help">
-          Yönetim panelinde <b>Donanım → Ajan ekle</b>'ye basın. Ekranda çıkan 8 haneli kodu
-          buraya yazın. Kod 15 dakika geçerlidir ve yalnızca bir kez kullanılır.
+          Yönetim panelinde <b>Donanım</b>'da yazıcıyı ekleyin; ekranda çıkan 8 haneli
+          <b>kurulum kodunu</b> buraya yazın. Kod 15 dakika geçerlidir ve yalnızca bir kez
+          kullanılır. Bu bilgisayara bağlı başka yazıcılar varsa, her biri kendi koduyla
+          sonradan <b>Yazıcılar</b> sekmesinden eklenir.
         </p>
         <div class="code-field">
           <input
@@ -146,14 +148,38 @@
             <section class="card">
               <h2>Yazıcılar</h2>
               <p class="help">
-                Ağ yazıcısı (IP ile) en sağlam yöntemdir. USB yazıcı kullanıyorsanız önce
-                Windows/Mac'e normal yazıcı olarak kurun, sonra buradan seçin.
+                Paneldeki her yazıcının <b>kendi kurulum kodu</b> vardır. Bu bilgisayara bağlı
+                her yazıcıyı kendi koduyla ekleyin, sonra aşağıda hangi yazıcıya bastığını seçin.
+                Ağ yazıcısı (IP ile) en sağlam yöntemdir; USB yazıcıyı önce Windows/Mac'e
+                normal yazıcı olarak kurun.
               </p>
+              <div class="code-field">
+                <input
+                  id="addCode"
+                  type="text"
+                  maxlength="9"
+                  placeholder="Yeni yazıcının kodu"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="Yeni yazıcının kurulum kodu"
+                />
+                <button id="addPairBtn" class="primary">Yazıcı ekle</button>
+              </div>
+              <p class="msg" id="addPairMsg" role="status"></p>
               <div class="row">
                 <button id="refreshBtn" class="ghost">Kurulu yazıcıları yenile</button>
                 <button id="scanBtn" class="ghost">Ağda ara</button>
                 <span class="msg" id="scanMsg" role="status"></span>
               </div>
+            </section>
+            <p class="help hidden" id="pairingsEmpty">Henüz yazıcı eklenmedi.</p>
+            <div class="stations" id="pairings"></div>
+            <section class="card hidden" id="legacyStations">
+              <h2>Önceki sürümden: <span id="legacyName">—</span></h2>
+              <p class="help">
+                Bu kayıt eski sürümde istasyona göre çalışıyordu ve öyle çalışmaya devam ediyor.
+                Diğer yazıcılarınızı panelden aldığınız kendi kodlarıyla yukarıdan ekleyin.
+              </p>
             </section>
             <div class="stations" id="stations"></div>
           </section>

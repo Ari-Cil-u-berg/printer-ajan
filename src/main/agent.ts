@@ -1,12 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { STATIONS } from '../shared/types';
+import { isStation } from '../shared/types';
 import type {
   AgentConfig,
   ConnectionState,
   BridgePairing,
   OkcConfig,
   OkcSaleResult,
+  PairingView,
   PrinterConfig,
+  PrinterPairing,
   PrintJob,
   StatusSnapshot,
   Station,
@@ -30,8 +33,10 @@ export class Agent extends EventEmitter {
   readonly config: ConfigStore;
   private readonly queue: JobQueue;
   private readonly engine: PrintEngine;
-  private connection: ConnectionManager | null = null;
-  private connectionState: ConnectionState = 'UNPAIRED';
+  /** One socket per printer pairing, keyed by its deviceId. */
+  private readonly connections = new Map<string, ConnectionManager>();
+  private readonly connectionStates = new Map<string, ConnectionState>();
+  private readonly pairingHealth = new Map<string, NonNullable<PairingView['health']>>();
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private probeTimer: NodeJS.Timeout | null = null;
   private lastJob: StatusSnapshot['lastJob'];
@@ -43,22 +48,26 @@ export class Agent extends EventEmitter {
   constructor(private readonly appVersion: string) {
     super();
     this.config = new ConfigStore();
-    this.engine = new PrintEngine((station) => this.config.get().printers[station]);
+    this.engine = new PrintEngine((job) => this.printerFor(job));
     this.queue = new JobQueue(this.config.dataDir(), (job) => this.engine.print(job));
     this.okc = new OkcManager(this.config.dataDir(), this.config.get().okc, (okc) =>
       this.config.update({ okc }),
     );
     this.okc.on('changed', () => this.emitStatus());
 
-    this.queue.on('ack', (ack) => {
+    this.queue.on('ack', (ack, job: PrintJob | undefined) => {
       this.lastJob = {
         jobId: ack.jobId,
-        station: this.lastJob?.station ?? 'BAR',
+        station: job?.station ?? this.lastJob?.station ?? 'BAR',
         status: ack.status === 'printed' ? 'Yazdırıldı' : 'Başarısız',
         at: new Date().toISOString(),
         error: ack.error,
       };
-      this.connection?.ack(ack);
+      // The ack goes back on the socket of the printer record that sent the
+      // job — the backend only accepts it from that device. A job from before
+      // pairings (no route) belonged to the single migrated pairing.
+      const route = job?.route ?? this.config.get().pairings.find((p) => p.legacyStationMap)?.deviceId;
+      if (route) this.connections.get(route)?.ack(ack);
       this.emitStatus();
     });
     this.queue.on('changed', () => this.emitStatus());
@@ -80,7 +89,8 @@ export class Agent extends EventEmitter {
     setAutostart(this.config.get().autostart);
     this.queue.start();
     this.okc.start();
-    this.connectIfPaired();
+    this.connectAll();
+    this.startHeartbeat();
     void this.connectBridge();
     this.probeTimer = setInterval(() => void this.refreshPrinterHealth(), PROBE_INTERVAL_MS);
     void this.refreshPrinterHealth();
@@ -90,88 +100,180 @@ export class Agent extends EventEmitter {
     this.queue.stop();
     this.okc.stop();
     this.bridge?.stop();
-    this.connection?.close();
+    for (const conn of this.connections.values()) conn.close();
+    this.connections.clear();
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.probeTimer) clearInterval(this.probeTimer);
   }
 
-  private connectIfPaired(): void {
-    const token = this.config.getToken();
+  // --- printer pairings ----------------------------------------------------
+
+  private connectAll(): void {
+    for (const pairing of this.config.get().pairings) this.connectPairing(pairing);
+    this.emitStatus();
+  }
+
+  private connectPairing(pairing: PrinterPairing): void {
+    const token = this.config.getToken(pairing.deviceId);
     if (!token) {
-      this.setConnectionState('UNPAIRED');
+      // A row without its token cannot authenticate and never will; drop it
+      // rather than show a printer that looks paired and never prints.
+      log.warn('pairing has no token — removing', { deviceId: pairing.deviceId });
+      this.config.removePairing(pairing.deviceId);
       return;
     }
     const cfg = this.config.get();
-    this.connection?.close();
+    this.connections.get(pairing.deviceId)?.close();
+
     const conn = new ConnectionManager({
       wsUrl: cfg.wsUrl,
       token,
       deviceInfo: deviceInfo(this.appVersion, cfg.deviceName),
       dataDir: this.config.dataDir(),
       queuedCount: () => this.queue.size(),
+      outboxName: `ack-outbox-${pairing.deviceId}.json`,
     });
-    conn.on('state', (state: ConnectionState) => this.setConnectionState(state));
+    conn.on('state', (state: ConnectionState) => {
+      this.connectionStates.set(pairing.deviceId, state);
+      this.emitStatus();
+    });
     conn.on('job', (job: PrintJob) => {
-      log.info('job received', { jobId: job.jobId, station: job.station });
+      // Stamped here, never trusted from the wire: this decides the printer.
+      const routed: PrintJob = { ...job, route: pairing.deviceId };
+      log.info('job received', { jobId: job.jobId, station: job.station, printer: pairing.printerName });
       this.lastJob = { jobId: job.jobId, station: job.station, status: 'Kuyrukta', at: new Date().toISOString() };
-      this.queue.enqueue(job);
+      this.queue.enqueue(routed);
     });
     conn.on('connected', () => this.queue.pumpAll());
     conn.on('unauthorized', () => {
-      // Revoked from the panel or a wiped token: drop credentials, ask for re-pairing.
-      log.warn('token rejected — clearing pairing');
-      this.config.clearToken();
-      this.setConnectionState('UNPAIRED');
-      this.emit('unauthorized');
+      // Revoked from the panel: this printer only. The others keep printing.
+      log.warn('token rejected — removing pairing', { printer: pairing.printerName });
+      this.connections.delete(pairing.deviceId);
+      this.connectionStates.delete(pairing.deviceId);
+      this.config.removePairing(pairing.deviceId);
+      this.emitStatus();
+      this.emit('unauthorized', pairing.printerName);
     });
-    this.connection = conn;
+    this.connections.set(pairing.deviceId, conn);
+    this.connectionStates.set(pairing.deviceId, 'CONNECTING');
     conn.connect();
+  }
 
+  private startHeartbeat(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
-      const t = this.config.getToken();
-      if (t) void heartbeat(cfg.apiBaseUrl, t, this.appVersion);
+      const cfg = this.config.get();
+      for (const pairing of cfg.pairings) {
+        const token = this.config.getToken(pairing.deviceId);
+        if (token) void heartbeat(cfg.apiBaseUrl, token, this.appVersion);
+      }
     }, HEARTBEAT_INTERVAL_MS);
   }
 
-  private setConnectionState(state: ConnectionState): void {
-    this.connectionState = state;
-    this.emitStatus();
+  /** The local printer a job goes to, and what to call it if there is none. */
+  private printerFor(job: PrintJob): { printer: PrinterConfig | undefined; label: string } {
+    const cfg = this.config.get();
+    const pairing = job.route
+      ? cfg.pairings.find((p) => p.deviceId === job.route)
+      : cfg.pairings.find((p) => p.legacyStationMap);
+    if (pairing && !pairing.legacyStationMap) {
+      return { printer: pairing.local, label: pairing.printerName };
+    }
+    return { printer: cfg.printers[job.station], label: `${job.station} istasyonu` };
+  }
+
+  /** Aggregate for the header: connected only when EVERY printer is. */
+  private aggregateState(): ConnectionState {
+    const pairings = this.config.get().pairings;
+    if (pairings.length === 0) return 'UNPAIRED';
+    const states = pairings.map((p) => this.connectionStates.get(p.deviceId) ?? 'CONNECTING');
+    if (states.every((st) => st === 'CONNECTED')) return 'CONNECTED';
+    if (states.some((st) => st === 'CONNECTING')) return 'CONNECTING';
+    return 'OFFLINE';
   }
 
   // --- actions used by IPC ------------------------------------------------
 
-  async pairWithCode(code: string): Promise<void> {
+  /**
+   * Adds ONE printer record. Every printer on the panel has its own code; a
+   * till with a kasa and a mutfak printer is paired twice. Re-entering a code
+   * for a printer already here replaces that pairing (a fresh code after a
+   * revoke) and keeps its local printer.
+   */
+  async pairWithCode(code: string): Promise<PrinterPairing> {
     const cfg = this.config.get();
     const result = await pair(cfg.apiBaseUrl, code, deviceInfo(this.appVersion, cfg.deviceName));
-    this.config.setToken(result.deviceToken);
+
+    // One till serves one café. A code from another tenant is almost always a
+    // mix-up at the counter, and silently printing a stranger's tickets here is
+    // the worst way to find out.
+    const other = cfg.pairings.find((p) => p.tenantId !== result.tenantId);
+    if (other) {
+      throw new Error(
+        `Bu bilgisayar "${other.tenantName}" işletmesine bağlı. Başka bir işletmenin kodu eklenemez.`,
+      );
+    }
+
+    const existing = cfg.pairings.find((p) => p.deviceId === result.deviceId);
+    const pairing: PrinterPairing = {
+      deviceId: result.deviceId,
+      printerName: result.printerName ?? result.branchName ?? 'Yazıcı',
+      stations: (result.stations ?? []).filter(isStation),
+      tenantId: result.tenantId,
+      branchId: result.branchId,
+      tenantName: result.tenantName,
+      branchName: result.branchName,
+      pairedAt: new Date().toISOString(),
+      ...(existing?.local ? { local: existing.local } : {}),
+    };
+    this.config.setToken(result.deviceId, result.deviceToken);
     this.config.update({
-      pairing: {
-        deviceId: result.deviceId,
-        tenantId: result.tenantId,
-        branchId: result.branchId,
-        tenantName: result.tenantName,
-        branchName: result.branchName,
-      },
+      pairings: [...cfg.pairings.filter((p) => p.deviceId !== result.deviceId), pairing],
     });
-    log.info('paired', { tenant: result.tenantName, branch: result.branchName });
-    this.connectIfPaired();
+    log.info('paired', { tenant: result.tenantName, printer: pairing.printerName });
+    this.connectPairing(pairing);
+    this.emitStatus();
+    return pairing;
   }
 
-  unpair(): void {
-    this.connection?.close();
-    this.connection = null;
-    this.config.clearToken();
-    this.setConnectionState('UNPAIRED');
+  /** Removes one printer pairing — or all of them when no id is given. */
+  unpair(deviceId?: string): void {
+    const targets = deviceId
+      ? [deviceId]
+      : this.config.get().pairings.map((p) => p.deviceId);
+    for (const id of targets) {
+      this.connections.get(id)?.close();
+      this.connections.delete(id);
+      this.connectionStates.delete(id);
+      this.pairingHealth.delete(id);
+      this.config.removePairing(id);
+    }
+    this.emitStatus();
   }
 
+  /** Which local printer a paired printer record prints to. */
+  setPairingPrinter(deviceId: string, printer: PrinterConfig | undefined): AgentConfig {
+    const pairings = this.config.get().pairings.map((p) => {
+      if (p.deviceId !== deviceId) return p;
+      const { local: _old, ...rest } = p;
+      // Choosing a printer for a migrated pairing moves it onto the new model.
+      const { legacyStationMap: _legacy, ...modern } = rest;
+      return printer ? { ...modern, local: printer } : rest;
+    });
+    const cfg = this.config.update({ pairings });
+    void this.refreshPrinterHealth();
+    this.queue.pumpAll(); // a fixed printer should drain the backlog immediately
+    return cfg;
+  }
+
+  /** Station map — only a pairing migrated from ≤0.3.21 still reads it. */
   setPrinter(station: Station, printer: PrinterConfig | undefined): AgentConfig {
     const printers = { ...this.config.get().printers };
     if (printer) printers[station] = printer;
     else delete printers[station];
     const cfg = this.config.update({ printers });
     void this.refreshPrinterHealth();
-    this.queue.pumpAll(); // a fixed printer should drain the backlog immediately
+    this.queue.pumpAll();
     return cfg;
   }
 
@@ -291,28 +393,54 @@ export class Agent extends EventEmitter {
   }
 
   testPrint(station: Station): Promise<void> {
-    return this.engine.testPrint(station);
+    const heading = { BAR: 'BAR', KITCHEN: 'MUTFAK', CASHIER: 'KASA' }[station];
+    return this.engine.testPrint(this.config.get().printers[station], heading);
+  }
+
+  /** The test slip names the panel record, so it can be matched to the machine. */
+  testPairingPrint(deviceId: string): Promise<void> {
+    const pairing = this.config.get().pairings.find((p) => p.deviceId === deviceId);
+    if (!pairing) throw new Error('Yazıcı bulunamadı');
+    return this.engine.testPrint(pairing.local, pairing.printerName.toLocaleUpperCase('tr-TR'));
   }
 
   async refreshPrinterHealth(): Promise<void> {
+    const cfg = this.config.get();
     const health: StatusSnapshot['printerHealth'] = {};
     for (const station of STATIONS) {
-      if (!this.config.get().printers[station]) continue;
-      const result = await this.engine.probe(station);
+      if (!cfg.printers[station]) continue;
+      const result = await this.engine.probe(cfg.printers[station]);
       health[station] = { ok: result.ok, checkedAt: new Date().toISOString(), error: result.error };
     }
     this.printerHealth = health;
+
+    this.pairingHealth.clear();
+    for (const pairing of cfg.pairings) {
+      if (!pairing.local) continue;
+      const result = await this.engine.probe(pairing.local);
+      this.pairingHealth.set(pairing.deviceId, {
+        ok: result.ok,
+        checkedAt: new Date().toISOString(),
+        ...(result.error ? { error: result.error } : {}),
+      });
+    }
     this.emitStatus();
   }
 
   status(): StatusSnapshot {
     const cfg = this.config.get();
     const env = envConfig();
+    const first = cfg.pairings[0];
     return {
-      connection: this.connectionState,
+      pairings: cfg.pairings.map((p) => ({
+        ...p,
+        connection: this.connectionStates.get(p.deviceId) ?? 'CONNECTING',
+        ...(this.pairingHealth.has(p.deviceId) ? { health: this.pairingHealth.get(p.deviceId) } : {}),
+      })),
+      connection: this.aggregateState(),
       paired: this.config.isPaired(),
-      tenantName: cfg.pairing?.tenantName,
-      branchName: cfg.pairing?.branchName,
+      tenantName: first?.tenantName,
+      branchName: first?.branchName,
       deviceName: cfg.deviceName,
       appVersion: this.appVersion,
       env: env.env,
