@@ -107,6 +107,29 @@
               </div>
             </div>
 
+            <!--
+              MÜŞTERİ EKRANI — tek karar, tek düğme. Kasiyerin de anlayacağı dil:
+              ne olacağı bir cümle, düğmeye basınca Windows'un ne soracağı bir
+              cümle. Teknik ayrıntı (politika adları, kayıt defteri) yok.
+              Yalnızca Windows'ta görünür.
+            -->
+            <section class="card cd hidden" id="cdCard">
+              <div class="cd-top">
+                <span class="cd-icon" aria-hidden="true"><span class="cd-screen"></span><span class="cd-screen"></span></span>
+                <div class="cd-text">
+                  <h2>Müşteri ekranı</h2>
+                  <p class="cd-lead" id="cdLead">İkinci monitörde, tam ekran ve kendiliğinden açılsın.</p>
+                </div>
+                <span class="pill" id="cdPill"><span class="dot" id="cdDot"></span><span id="cdPillText">…</span></span>
+              </div>
+              <div class="cd-actions">
+                <button id="cdGrantBtn" class="primary lg">Bu bilgisayara izin ver</button>
+                <button id="cdRevokeBtn" class="link hidden" type="button">İzni kaldır</button>
+              </div>
+              <p class="fineprint" id="cdNote">Windows bir kez “Evet” diye soracak. İzin yalnızca POS sayfanız için geçerli.</p>
+              <p class="msg" id="cdMsg" role="status"></p>
+            </section>
+
             <section class="card">
               <h2>Son işlemler</h2>
               <dl class="kv">

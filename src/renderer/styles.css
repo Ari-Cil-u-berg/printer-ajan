@@ -473,3 +473,30 @@ button:disabled { opacity: 0.5; cursor: default; }
   white-space: pre;
 }
 button.ghost.small { padding: 3px 9px; font-size: 11px; }
+
+/* ── müşteri ekranı kartı ──────────────────────────────────────────────── */
+
+.cd-top { display: flex; align-items: center; gap: 14px; }
+.cd-text { flex: 1; min-width: 0; }
+.cd-text h2 { margin: 0 0 2px; font-size: 15px; }
+.cd-lead { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+/* İki ekran: kasiyerinki ve müşterininki — tek bakışta "ikinci monitör". */
+.cd-icon {
+  display: inline-flex; gap: 4px; align-items: flex-end; flex: none;
+  padding: 10px; border-radius: var(--r-md); background: var(--surface-2);
+}
+.cd-screen {
+  width: 16px; height: 12px; border: 2px solid var(--muted); border-radius: 3px;
+}
+.cd-screen + .cd-screen { width: 20px; height: 15px; border-color: var(--brand); }
+.cd.is-ready .cd-screen + .cd-screen { border-color: var(--ok); }
+
+.cd-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 16px 0 8px; }
+.cd.is-ready .cd-actions { margin-top: 12px; }
+
+button.link {
+  background: none; border: none; padding: 0; color: var(--muted);
+  font-size: 12.5px; text-decoration: underline; cursor: pointer;
+}
+button.link:hover:not(:disabled) { background: none; color: var(--ink); }

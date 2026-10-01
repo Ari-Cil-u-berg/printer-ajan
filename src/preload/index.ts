@@ -58,6 +58,10 @@ const api = {
   diagnoseOkc: () => ipcRenderer.invoke('okc:diagnose'),
   pairBridge: (code: string) => ipcRenderer.invoke('bridge:pair', code),
   unpairBridge: () => ipcRenderer.invoke('bridge:unpair'),
+  /** Müşteri ekranı tarayıcı izinleri: durum (sessiz), ver / kaldır (bir kez Windows onayı). */
+  customerDisplayStatus: () => ipcRenderer.invoke('customerDisplay:status'),
+  grantCustomerDisplay: () => ipcRenderer.invoke('customerDisplay:grant'),
+  revokeCustomerDisplay: () => ipcRenderer.invoke('customerDisplay:revoke'),
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('settings:autostart', enabled),
   setDeviceName: (name: string) => ipcRenderer.invoke('settings:deviceName', name),
   checkUpdates: () => ipcRenderer.invoke('app:checkUpdates'),

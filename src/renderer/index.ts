@@ -158,7 +158,18 @@ interface OkcDiagnostics {
   deviceSerialNo?: string;
 }
 
+/** `main/customer-display.ts` CustomerDisplayStatus — iki tarafı birlikte güncelleyin. */
+interface CustomerDisplayStatus {
+  supported: boolean;
+  origin: string | null;
+  ready: boolean;
+  removable: boolean;
+}
+
 interface AgentBridge {
+  customerDisplayStatus(): Promise<Result<CustomerDisplayStatus>>;
+  grantCustomerDisplay(): Promise<Result<CustomerDisplayStatus>>;
+  revokeCustomerDisplay(): Promise<Result<CustomerDisplayStatus>>;
   getStatus(): Promise<StatusSnapshot>;
   onStatus(cb: (s: StatusSnapshot) => void): void;
   onUnauthorized(cb: (printerName?: string) => void): void;
@@ -1120,6 +1131,8 @@ $('pairBtn').addEventListener('click', async () => {
     input.value = '';
     setMsg(msg, '');
     render(res.data);
+    // Artık sunucu biliniyor: müşteri ekranı kartı durumunu sorabilir.
+    void refreshCustomerDisplay();
     // İlk yazıcı eklendi: bu bilgisayardaki yazıcısını seçmek bir sonraki adım.
     showPanel('printers');
   } else {
@@ -1207,6 +1220,66 @@ $('logClearBtn').addEventListener('click', async () => {
   logEntries = [];
   renderLogs();
   setMsg($('logMsg'), 'Ekran temizlendi (dosya korunur).');
+});
+
+// ── Müşteri ekranı ──────────────────────────────────────────────────────────
+
+/**
+ * Üç hâl, her biri tek cümle: hazır, hazır değil, sunucuya ulaşılamadı.
+ * Düğme yalnızca bir işe yarayacaksa görünür.
+ */
+function renderCustomerDisplay(s: CustomerDisplayStatus): void {
+  const card = $('cdCard');
+  card.classList.toggle('hidden', !s.supported);
+  if (!s.supported) return;
+
+  const host = s.origin ? new URL(s.origin).host : 'POS sayfanız';
+  card.classList.toggle('is-ready', s.ready);
+  $('cdDot').className = `dot ${s.ready ? 'ok' : s.origin ? 'warn' : 'bad'}`;
+  $('cdPillText').textContent = s.ready ? 'Hazır' : s.origin ? 'İzin gerekli' : 'Bağlantı yok';
+  $('cdLead').textContent = s.ready
+    ? 'POS’ta “Müşteri ekranını aç”a basın; ikinci monitörde tam ekran açılır.'
+    : 'İkinci monitörde, tam ekran ve kendiliğinden açılsın.';
+  $('cdGrantBtn').classList.toggle('hidden', s.ready);
+  $<HTMLButtonElement>('cdGrantBtn').disabled = !s.origin;
+  $('cdRevokeBtn').classList.toggle('hidden', !(s.ready && s.removable));
+  $('cdNote').textContent = s.ready
+    ? `İzin yalnızca ${host} için geçerli. Birden fazla kasa bilgisayarınız varsa her birinde bir kez verilir.`
+    : s.origin
+      ? `Windows bir kez “Evet” diye soracak. İzin yalnızca ${host} için geçerli.`
+      : 'Sunucuya ulaşılamadı. İnternet bağlantısını kontrol edip pencereyi yeniden açın.';
+}
+
+async function refreshCustomerDisplay(): Promise<void> {
+  const res = await bridge.customerDisplayStatus();
+  if (res.ok) renderCustomerDisplay(res.data);
+}
+
+$('cdGrantBtn').addEventListener('click', async () => {
+  const btn = $<HTMLButtonElement>('cdGrantBtn');
+  btn.disabled = true;
+  btn.textContent = 'Windows onayı bekleniyor…';
+  setMsg($('cdMsg'), '');
+  const res = await bridge.grantCustomerDisplay();
+  btn.textContent = 'Bu bilgisayara izin ver';
+  btn.disabled = false;
+  if (res.ok) {
+    renderCustomerDisplay(res.data);
+    setMsg($('cdMsg'), 'Tamam. Tarayıcıyı tamamen kapatıp açın, sonra POS’ta “Müşteri ekranını aç”a basın.', 'ok');
+  } else {
+    setMsg($('cdMsg'), res.error, 'bad');
+  }
+});
+
+$('cdRevokeBtn').addEventListener('click', async () => {
+  setMsg($('cdMsg'), '');
+  const res = await bridge.revokeCustomerDisplay();
+  if (res.ok) {
+    renderCustomerDisplay(res.data);
+    setMsg($('cdMsg'), 'İzin kaldırıldı.');
+  } else {
+    setMsg($('cdMsg'), res.error, 'bad');
+  }
 });
 
 let updateState: UpdateStatus | null = null;
@@ -1304,6 +1377,7 @@ void (async () => {
   logEntries = await bridge.getLogs();
   renderLogs();
   await refreshPrinters();
+  void refreshCustomerDisplay();
 
   // Yüklenirken sor: pencere kapatılıp durum değiştikten çok sonra açılabilir.
   const update = await bridge.getUpdateStatus();

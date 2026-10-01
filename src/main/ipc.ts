@@ -8,6 +8,12 @@ import { localMacAddresses } from './okc/okc';
 import { isPrivateHost, PCLINK_DEFAULT_PORT } from './okc/pclink';
 import { listPrinters, listUnqueuedUsbPrinters, scanNetworkPrinters } from './print/printer-registry';
 import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
+import {
+  customerDisplayStatus,
+  fetchPosOrigin,
+  grantCustomerDisplay,
+  revokeCustomerDisplay,
+} from './customer-display';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -307,6 +313,35 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
 
   // Returns the status it starts from, so a click always paints something —
   // the later phases arrive on the 'update' channel.
+  // ── Müşteri ekranı izinleri (bkz. customer-display.ts) ──────────────────
+  // Köken sunucudan, eşleşmiş herhangi bir yazıcının kimliğiyle sorulur: bütün
+  // eşleşmeler aynı sunucuya ait. Renderer hiçbir değer göndermez.
+  const posOrigin = async (): Promise<string | null> => {
+    const cfg = agent.config.get();
+    for (const pairing of cfg.pairings) {
+      const token = agent.config.getToken(pairing.deviceId);
+      if (token) return fetchPosOrigin(cfg.apiBaseUrl, token);
+    }
+    return null;
+  };
+  ipcMain.handle('customerDisplay:status', () =>
+    guard(async () => customerDisplayStatus(await posOrigin(), agent.config.dataDir())),
+  );
+  ipcMain.handle('customerDisplay:grant', () =>
+    guard(async () => {
+      const origin = await posOrigin();
+      if (!origin) throw new Error('Sunucuya ulaşılamadı. İnternet bağlantısını kontrol edip tekrar deneyin.');
+      await grantCustomerDisplay(origin, agent.config.dataDir());
+      return customerDisplayStatus(origin, agent.config.dataDir());
+    }),
+  );
+  ipcMain.handle('customerDisplay:revoke', () =>
+    guard(async () => {
+      await revokeCustomerDisplay(agent.config.dataDir());
+      return customerDisplayStatus(await posOrigin(), agent.config.dataDir());
+    }),
+  );
+
   ipcMain.handle('app:checkUpdates', () => guard(() => checkForUpdatesNow()));
   ipcMain.handle('app:updateStatus', () => guard(() => updateStatus()));
   ipcMain.handle('app:installUpdate', () => guard(() => { installUpdateNow(); return true; }));
