@@ -118,15 +118,33 @@
                 <span class="cd-icon" aria-hidden="true"><span class="cd-screen"></span><span class="cd-screen"></span></span>
                 <div class="cd-text">
                   <h2>Müşteri ekranı</h2>
-                  <p class="cd-lead" id="cdLead">İkinci monitörde, tam ekran ve kendiliğinden açılsın.</p>
+                  <p class="cd-lead" id="cdLead">Müşteriye bakan monitörü seçin; POS’ta “Müşteri ekranını aç” orada tam ekran açılır.</p>
                 </div>
                 <span class="pill" id="cdPill"><span class="dot" id="cdDot"></span><span id="cdPillText">…</span></span>
               </div>
-              <div class="cd-actions">
-                <button id="cdGrantBtn" class="primary lg">Bu bilgisayara izin ver</button>
-                <button id="cdRevokeBtn" class="link hidden" type="button">İzni kaldır</button>
+
+              <!-- 1 · İzin (yalnızca Windows) -->
+              <div class="cd-step" id="cdStepPerm">
+                <div class="cd-step-head"><span class="cd-num" id="cdNum1">1</span><b>Bu bilgisayara izin verin</b></div>
+                <div class="cd-actions">
+                  <button id="cdGrantBtn" class="primary">İzin ver</button>
+                  <span class="cd-done hidden" id="cdPermDone">✓ İzin verildi</span>
+                  <button id="cdRevokeBtn" class="link hidden" type="button">İzni kaldır</button>
+                </div>
+                <p class="fineprint" id="cdNote">Windows bir kez “Evet” diye soracak. İzin yalnızca POS sayfanız için geçerli.</p>
               </div>
-              <p class="fineprint" id="cdNote">Windows bir kez “Evet” diye soracak. İzin yalnızca POS sayfanız için geçerli.</p>
+
+              <!-- 2 · Ekran seçimi -->
+              <div class="cd-step">
+                <div class="cd-step-head"><span class="cd-num" id="cdNum2">2</span><b>Müşteri ekranı hangisi?</b></div>
+                <div class="cd-displays" id="cdDisplays" role="radiogroup" aria-label="Müşteri ekranı"></div>
+                <p class="fineprint cd-warn hidden" id="cdPrimaryWarn">Ana ekran seçili. Kasa uygulaması da buradaysa müşteri ekranı onun üstünü kapatır — müşteriye bakan monitörü seçin.</p>
+                <p class="fineprint hidden" id="cdSingle">Tek ekran görünüyor. İkinci monitörü bağlayın ve Windows’ta “Bu ekranları genişlet” seçin.</p>
+                <div class="cd-actions">
+                  <button id="cdIdentifyBtn" class="ghost">Ekranları tanı</button>
+                  <button id="cdTestBtn" class="ghost">Dene: şimdi aç</button>
+                </div>
+              </div>
               <p class="msg" id="cdMsg" role="status"></p>
             </section>
 

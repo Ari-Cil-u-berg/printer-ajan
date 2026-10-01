@@ -500,3 +500,27 @@ button.link {
   font-size: 12.5px; text-decoration: underline; cursor: pointer;
 }
 button.link:hover:not(:disabled) { background: none; color: var(--ink); }
+
+.cd-step { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.cd-step-head { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.cd-num {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 700; flex: none;
+}
+.cd-num.done { background: var(--ok); color: #fff; }
+.cd-done { color: var(--ok); font-size: 13px; font-weight: 600; }
+.cd-step .cd-actions { margin: 12px 0 6px; }
+
+/* Monitör kutucukları: tek dokunuşla seçilir, seçili olan kalın çerçeveli. */
+.cd-displays { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.cd-display {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
+  padding: 12px 14px; border-radius: var(--r-md); border: 2px solid var(--line); background: var(--surface);
+  cursor: pointer;
+}
+.cd-display:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface); }
+.cd-display[aria-checked="true"] { border-color: var(--ok); background: var(--surface-2); }
+.cd-display-name { font-size: 14px; font-weight: 700; }
+.cd-display-meta { font-size: 12px; color: var(--muted); }
+.cd-display-check { font-size: 12px; font-weight: 700; color: var(--ok); }
+.cd-warn { color: var(--warn); margin-top: 8px; }

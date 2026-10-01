@@ -166,7 +166,21 @@ interface CustomerDisplayStatus {
   removable: boolean;
 }
 
+/** `main/customer-window.ts` DisplayView. */
+interface DisplayView {
+  id: number;
+  name: string;
+  label: string;
+  size: string;
+  primary: boolean;
+  selected: boolean;
+}
+
 interface AgentBridge {
+  customerDisplays(): Promise<Result<DisplayView[]>>;
+  selectCustomerDisplay(id: number): Promise<Result<DisplayView[]>>;
+  identifyDisplays(): Promise<Result<boolean>>;
+  openCustomerDisplayTest(): Promise<Result<void>>;
   customerDisplayStatus(): Promise<Result<CustomerDisplayStatus>>;
   grantCustomerDisplay(): Promise<Result<CustomerDisplayStatus>>;
   revokeCustomerDisplay(): Promise<Result<CustomerDisplayStatus>>;
@@ -1225,34 +1239,87 @@ $('logClearBtn').addEventListener('click', async () => {
 // ── Müşteri ekranı ──────────────────────────────────────────────────────────
 
 /**
- * Üç hâl, her biri tek cümle: hazır, hazır değil, sunucuya ulaşılamadı.
- * Düğme yalnızca bir işe yarayacaksa görünür.
+ * İki adım, her biri tek karar: (1) izin — yalnızca Windows, (2) hangi monitör.
+ * "Hazır" ancak ikisi de tamamsa yanar. Teknik terim yok.
  */
-function renderCustomerDisplay(s: CustomerDisplayStatus): void {
-  const card = $('cdCard');
-  card.classList.toggle('hidden', !s.supported);
-  if (!s.supported) return;
+let cdPerm: CustomerDisplayStatus | null = null;
+let cdDisplays: DisplayView[] = [];
 
-  const host = s.origin ? new URL(s.origin).host : 'POS sayfanız';
-  card.classList.toggle('is-ready', s.ready);
-  $('cdDot').className = `dot ${s.ready ? 'ok' : s.origin ? 'warn' : 'bad'}`;
-  $('cdPillText').textContent = s.ready ? 'Hazır' : s.origin ? 'İzin gerekli' : 'Bağlantı yok';
-  $('cdLead').textContent = s.ready
-    ? 'POS’ta “Müşteri ekranını aç”a basın; ikinci monitörde tam ekran açılır.'
-    : 'İkinci monitörde, tam ekran ve kendiliğinden açılsın.';
-  $('cdGrantBtn').classList.toggle('hidden', s.ready);
-  $<HTMLButtonElement>('cdGrantBtn').disabled = !s.origin;
-  $('cdRevokeBtn').classList.toggle('hidden', !(s.ready && s.removable));
-  $('cdNote').textContent = s.ready
-    ? `İzin yalnızca ${host} için geçerli. Birden fazla kasa bilgisayarınız varsa her birinde bir kez verilir.`
-    : s.origin
+function renderCustomerDisplay(): void {
+  const card = $('cdCard');
+  card.classList.remove('hidden');
+  const perm = cdPerm;
+  const needsPerm = perm?.supported === true;
+  const permOk = !needsPerm || perm?.ready === true;
+  const chosen = cdDisplays.find((d) => d.selected) ?? null;
+  const ready = permOk && chosen !== null;
+
+  card.classList.toggle('is-ready', ready);
+  $('cdDot').className = `dot ${ready ? 'ok' : 'warn'}`;
+  $('cdPillText').textContent = ready ? 'Hazır' : 'Kurulum gerekli';
+  $('cdLead').textContent = ready
+    ? `POS’ta “Müşteri ekranını aç” deyince ${chosen.name}’de tam ekran açılır.`
+    : 'Müşteriye bakan monitörü seçin; POS’ta “Müşteri ekranını aç” orada tam ekran açılır.';
+
+  // 1 · İzin
+  $('cdStepPerm').classList.toggle('hidden', !needsPerm);
+  $('cdNum1').classList.toggle('done', permOk);
+  $('cdGrantBtn').classList.toggle('hidden', permOk);
+  $<HTMLButtonElement>('cdGrantBtn').disabled = !perm?.origin;
+  $('cdPermDone').classList.toggle('hidden', !permOk);
+  $('cdRevokeBtn').classList.toggle('hidden', !(permOk && perm?.removable));
+  const host = perm?.origin ? new URL(perm.origin).host : 'POS sayfanız';
+  $('cdNote').textContent = permOk
+    ? `İzin yalnızca ${host} için geçerli.`
+    : perm?.origin
       ? `Windows bir kez “Evet” diye soracak. İzin yalnızca ${host} için geçerli.`
       : 'Sunucuya ulaşılamadı. İnternet bağlantısını kontrol edip pencereyi yeniden açın.';
+
+  // 2 · Ekran
+  $('cdNum2').classList.toggle('done', chosen !== null);
+  const list = $('cdDisplays');
+  list.replaceChildren(
+    ...cdDisplays.map((d) => {
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'cd-display';
+      tile.setAttribute('role', 'radio');
+      tile.setAttribute('aria-checked', String(d.selected));
+      const name = document.createElement('span');
+      name.className = 'cd-display-name';
+      name.textContent = d.name;
+      const meta = document.createElement('span');
+      meta.className = 'cd-display-meta';
+      meta.textContent = [d.size, d.primary ? 'ana ekran' : '', d.label].filter(Boolean).join(' · ');
+      tile.append(name, meta);
+      if (d.selected) {
+        const check = document.createElement('span');
+        check.className = 'cd-display-check';
+        check.textContent = '✓ Müşteri ekranı';
+        tile.append(check);
+      }
+      tile.addEventListener('click', () => void selectDisplay(d.id));
+      return tile;
+    }),
+  );
+  $('cdSingle').classList.toggle('hidden', cdDisplays.length !== 1);
+  $('cdPrimaryWarn').classList.toggle('hidden', !(chosen?.primary && cdDisplays.length > 1));
+  $<HTMLButtonElement>('cdTestBtn').disabled = chosen === null;
 }
 
 async function refreshCustomerDisplay(): Promise<void> {
-  const res = await bridge.customerDisplayStatus();
-  if (res.ok) renderCustomerDisplay(res.data);
+  const [perm, displays] = await Promise.all([bridge.customerDisplayStatus(), bridge.customerDisplays()]);
+  if (perm.ok) cdPerm = perm.data;
+  if (displays.ok) cdDisplays = displays.data;
+  renderCustomerDisplay();
+}
+
+async function selectDisplay(id: number): Promise<void> {
+  const res = await bridge.selectCustomerDisplay(id);
+  if (!res.ok) return setMsg($('cdMsg'), res.error, 'bad');
+  cdDisplays = res.data;
+  renderCustomerDisplay();
+  setMsg($('cdMsg'), 'Kaydedildi.', 'ok');
 }
 
 $('cdGrantBtn').addEventListener('click', async () => {
@@ -1261,11 +1328,12 @@ $('cdGrantBtn').addEventListener('click', async () => {
   btn.textContent = 'Windows onayı bekleniyor…';
   setMsg($('cdMsg'), '');
   const res = await bridge.grantCustomerDisplay();
-  btn.textContent = 'Bu bilgisayara izin ver';
+  btn.textContent = 'İzin ver';
   btn.disabled = false;
   if (res.ok) {
-    renderCustomerDisplay(res.data);
-    setMsg($('cdMsg'), 'Tamam. Tarayıcıyı tamamen kapatıp açın, sonra POS’ta “Müşteri ekranını aç”a basın.', 'ok');
+    cdPerm = res.data;
+    renderCustomerDisplay();
+    setMsg($('cdMsg'), 'Tamam. Tarayıcıyı tamamen kapatıp açın.', 'ok');
   } else {
     setMsg($('cdMsg'), res.error, 'bad');
   }
@@ -1274,12 +1342,22 @@ $('cdGrantBtn').addEventListener('click', async () => {
 $('cdRevokeBtn').addEventListener('click', async () => {
   setMsg($('cdMsg'), '');
   const res = await bridge.revokeCustomerDisplay();
-  if (res.ok) {
-    renderCustomerDisplay(res.data);
-    setMsg($('cdMsg'), 'İzin kaldırıldı.');
-  } else {
-    setMsg($('cdMsg'), res.error, 'bad');
-  }
+  if (!res.ok) return setMsg($('cdMsg'), res.error, 'bad');
+  cdPerm = res.data;
+  renderCustomerDisplay();
+  setMsg($('cdMsg'), 'İzin kaldırıldı.');
+});
+
+$('cdIdentifyBtn').addEventListener('click', () => {
+  void bridge.identifyDisplays();
+  setMsg($('cdMsg'), 'Her monitörde numarası 3 saniye görünüyor.');
+  void refreshCustomerDisplay(); // Yeni takılan monitör listeye girsin.
+});
+
+$('cdTestBtn').addEventListener('click', async () => {
+  setMsg($('cdMsg'), 'Açılıyor…');
+  const res = await bridge.openCustomerDisplayTest();
+  setMsg($('cdMsg'), res.ok ? 'Açıldı. Kapatmak için müşteri ekranında Alt+F4.' : res.error, res.ok ? 'ok' : 'bad');
 });
 
 let updateState: UpdateStatus | null = null;

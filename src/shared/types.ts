@@ -213,6 +213,10 @@ export interface AgentConfig {
    * iptal etmek diğerini düşürmemeli.
    */
   bridge?: BridgePairing;
+  /** Müşteri ekranının açılacağı monitör (Electron `Display.id`). Seçilmediyse yok. */
+  customerDisplayId?: number;
+  /** Sunucunun son bildirdiği POS kökeni — internetsiz açılışta kullanılır, okunurken yeniden doğrulanır. */
+  lastPosOrigin?: string;
 }
 
 /** Köprü kimliği. Anahtar burada DEĞİL — safeStorage ile ayrı dosyada. */

@@ -50,6 +50,10 @@ const POLICIES = [
   'WindowManagementAllowedForUrls',
   'PopupsAllowedForUrls',
   'AutomaticFullscreenAllowedForUrls',
+  // POS sekmesinin 127.0.0.1'deki ajana ulaşması (local-bridge.ts): Chrome
+  // 142–145 tek izin, 146+ ayrı "loopback" izni. İkisi de yazılır.
+  'LocalNetworkAccessAllowedForUrls',
+  'LoopbackNetworkAllowedForUrls',
 ] as const;
 
 const KEYS: string[] = BROWSERS.flatMap((browser) => POLICIES.map((policy) => `${ROOT}\\${browser}\\${policy}`));
@@ -59,7 +63,7 @@ export interface CustomerDisplayStatus {
   supported: boolean;
   /** İzin verilecek POS kökeni; sunucuya ulaşılamadıysa null. */
   origin: string | null;
-  /** Dokuz girdinin hepsi yerinde. */
+  /** Bütün girdiler (3 tarayıcı × 5 politika) yerinde. */
   ready: boolean;
   /** Bu ajanın eklediği ve kaldırabileceği girdi var mı. */
   removable: boolean;
@@ -119,11 +123,46 @@ function sameSite(a: string, b: string): boolean {
 
 // ── Sunucudan köken ─────────────────────────────────────────────────────────
 
-let cachedOrigin: string | null = null;
+/** Eşleşmiş herhangi bir yazıcının kimliğiyle — bütün eşleşmeler aynı sunucuya ait. */
+export async function resolvePosOrigin(config: {
+  get(): { apiBaseUrl: string; pairings: { deviceId: string }[]; lastPosOrigin?: string };
+  getToken(deviceId: string): string | null;
+  update(patch: { lastPosOrigin: string }): unknown;
+}): Promise<string | null> {
+  const cfg = config.get();
+  for (const pairing of cfg.pairings) {
+    const token = config.getToken(pairing.deviceId);
+    if (!token) continue;
+    const fresh = await fetchPosOrigin(cfg.apiBaseUrl, token);
+    if (fresh) {
+      if (fresh !== cfg.lastPosOrigin) config.update({ lastPosOrigin: fresh });
+      return fresh;
+    }
+    break;
+  }
+  // Sunucuya ulaşılamıyor: bilinen son köken — müşteri ekranı internetsiz de
+  // çalışmalı. Diskten geldiği için yeniden doğrulanır.
+  return cfg.lastPosOrigin ? acceptPosOrigin(cfg.lastPosOrigin, cfg.apiBaseUrl) : null;
+}
 
-/** `/agent/info` → doğrulanmış köken. Süreç ömrü boyunca önbellekte. */
+let cachedOrigin: string | null = null;
+let failedAt = 0;
+const RETRY_AFTER_MS = 30_000;
+
+/**
+ * `/agent/info` → doğrulanmış köken. Başarı süreç ömrü boyunca önbellekte;
+ * başarısızlıktan sonra 30 sn sorulmaz (yerel köprünün her isteği sunucuya
+ * gitmesin).
+ */
 export async function fetchPosOrigin(apiBaseUrl: string, token: string): Promise<string | null> {
   if (cachedOrigin) return cachedOrigin;
+  if (Date.now() - failedAt < RETRY_AFTER_MS) return null;
+  const origin = await fetchPosOriginOnce(apiBaseUrl, token);
+  if (!origin) failedAt = Date.now();
+  return origin;
+}
+
+async function fetchPosOriginOnce(apiBaseUrl: string, token: string): Promise<string | null> {
   try {
     const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/agent/info`, {
       headers: { Authorization: `Bearer ${token}` },

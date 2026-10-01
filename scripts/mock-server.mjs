@@ -72,6 +72,13 @@ const server = http.createServer((req, res) => {
       return send(200, { ok: true });
     }
 
+    // Müşteri ekranı: ajan POS kökenini buradan öğrenir. Yerel POS dev sunucusu
+    // (apps/pos, vite) varsayılan olarak 5174'te; MOCK_POS_ORIGIN ile değiştirin.
+    if (req.url === '/api/v1/agent/info' && req.method === 'GET') {
+      if (!req.headers.authorization?.startsWith('Bearer ')) return send(401, { message: 'Bilinmeyen cihaz' });
+      return send(200, { posOrigin: process.env.MOCK_POS_ORIGIN ?? 'http://localhost:5174' });
+    }
+
     if (req.url?.startsWith('/api/v1/agent/latest')) {
       return send(200, { version: '0.1.0', url: 'https://example.invalid/installer', sha256: 'deadbeef' });
     }

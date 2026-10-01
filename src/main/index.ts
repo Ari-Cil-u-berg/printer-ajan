@@ -8,6 +8,9 @@ import { envConfig, takeEnvWarnings } from './env';
 import { registerIpc, streamLogsToWindow } from './ipc';
 import { log } from './logger';
 import { checkForUpdatesNow, initAutoUpdate, onUpdateStatus } from './updater';
+import { resolvePosOrigin } from './customer-display';
+import { CustomerWindow } from './customer-window';
+import { startLocalBridge } from './local-bridge';
 
 const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak', CASHIER: 'Kasa' };
 
@@ -54,7 +57,19 @@ async function main(): Promise<void> {
   process.on('unhandledRejection', (reason) => log.error('unhandled rejection', reason));
 
   agent = new Agent(app.getVersion());
-  registerIpc(agent, () => window);
+  const config = agent.config;
+  const posOrigin = (): Promise<string | null> => resolvePosOrigin(config);
+  // Müşteri ekranı: seçilen monitörde ajanın açtığı pencere + POS sekmesinin
+  // ona ulaştığı yerel köprü (bkz. customer-window.ts, local-bridge.ts).
+  const customerWindow = new CustomerWindow(() => config.get().customerDisplayId, posOrigin);
+  startLocalBridge({
+    posOrigin,
+    status: () => ({ configured: customerWindow.configured(), open: customerWindow.isOpen() }),
+    open: () => customerWindow.open(),
+    close: () => customerWindow.close(),
+    state: (payload) => customerWindow.pushState(payload),
+  });
+  registerIpc(agent, () => window, customerWindow);
   streamLogsToWindow(() => window);
   agent.on('status', (status: StatusSnapshot) => {
     updateTray(status);

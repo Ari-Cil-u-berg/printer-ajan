@@ -10,10 +10,11 @@ import { listPrinters, listUnqueuedUsbPrinters, scanNetworkPrinters } from './pr
 import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
 import {
   customerDisplayStatus,
-  fetchPosOrigin,
   grantCustomerDisplay,
+  resolvePosOrigin,
   revokeCustomerDisplay,
 } from './customer-display';
+import type { CustomerWindow } from './customer-window';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -153,7 +154,11 @@ function assertOkc(value: unknown): OkcConfig {
   };
 }
 
-export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null): void {
+export function registerIpc(
+  agent: Agent,
+  getWindow: () => BrowserWindow | null,
+  customerWindow: CustomerWindow,
+): void {
   ipcMain.handle('status:get', () => agent.status());
 
   ipcMain.handle('pair', (_e, code: unknown) =>
@@ -316,14 +321,21 @@ export function registerIpc(agent: Agent, getWindow: () => BrowserWindow | null)
   // ── Müşteri ekranı izinleri (bkz. customer-display.ts) ──────────────────
   // Köken sunucudan, eşleşmiş herhangi bir yazıcının kimliğiyle sorulur: bütün
   // eşleşmeler aynı sunucuya ait. Renderer hiçbir değer göndermez.
-  const posOrigin = async (): Promise<string | null> => {
-    const cfg = agent.config.get();
-    for (const pairing of cfg.pairings) {
-      const token = agent.config.getToken(pairing.deviceId);
-      if (token) return fetchPosOrigin(cfg.apiBaseUrl, token);
-    }
-    return null;
-  };
+  const posOrigin = (): Promise<string | null> => resolvePosOrigin(agent.config);
+
+  // Monitör seçimi ve deneme açılışı (bkz. customer-window.ts).
+  ipcMain.handle('customerDisplay:displays', () => guard(() => customerWindow.displays()));
+  ipcMain.handle('customerDisplay:select', (_e, id: unknown) =>
+    guard(() => {
+      if (typeof id !== 'number' || !customerWindow.displays().some((d) => d.id === id)) {
+        throw new Error('Geçersiz ekran');
+      }
+      agent.config.update({ customerDisplayId: id });
+      return customerWindow.displays();
+    }),
+  );
+  ipcMain.handle('customerDisplay:identify', () => guard(() => { customerWindow.identify(); return true; }));
+  ipcMain.handle('customerDisplay:openTest', () => guard(() => customerWindow.open()));
   ipcMain.handle('customerDisplay:status', () =>
     guard(async () => customerDisplayStatus(await posOrigin(), agent.config.dataDir())),
   );
