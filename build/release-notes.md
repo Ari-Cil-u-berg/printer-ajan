@@ -1,3 +1,3 @@
-Windows kurulumunda fiş yazdırma, PowerShell'in açamadığı app.asar içindeki betik yüzünden "dosya yok" hatası veriyordu. raw-print.ps1 artık arşivin dışına kopyalanıyor ve yazdırma bu yolu kullanıyor.
+Durum ekranında “Müşteri ekranı” kartı var. “Bu bilgisayara izin ver”e basın; Windows bir kez “Evet” diye sorar. İzin yalnızca POS sayfanız için geçerli, böylece müşteri ekranı ikinci monitörde sormadan tam ekran açılır.
 
-Kurduktan sonra XP-80C'de bir kez "Test yazdır" yeterli.
+İzin verdikten sonra tarayıcıyı tamamen kapatıp açın, sonra POS’ta “Müşteri ekranını aç”a basın.
