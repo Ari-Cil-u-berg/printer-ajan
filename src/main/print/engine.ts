@@ -1,6 +1,7 @@
 import type { PrintJob, PrinterConfig } from '../../shared/types';
 import { log } from '../logger';
-import { EscPosBuilder, renderTestTicket, renderTicket } from './escpos';
+import { EscPosBuilder, renderTicket } from './escpos';
+import { calibrationBlock, serverStyleTestSlip, serverTicketBytes } from './server-escpos';
 import { printOverNetwork, probeNetworkPrinter } from './network-driver';
 import { printViaSpooler, probeSpoolerPrinter } from './spooler-driver';
 
@@ -17,6 +18,16 @@ export class PrinterNotConfiguredError extends Error {
  * error when there is none.
  */
 export type PrinterResolver = (job: PrintJob) => { printer: PrinterConfig | undefined; label: string };
+
+const TABLE_LABEL: Record<string, string> = {
+  PC857_13: 'PC857 · 13',
+  WPC1254_48: 'WPC1254 · 48',
+  ASCII: 'Türkçe harfsiz',
+};
+
+function textTableLabel(printer: PrinterConfig): string {
+  return TABLE_LABEL[printer.textTable ?? ''] ?? 'Varsayılan (WPC1254 · 91)';
+}
 
 export class PrintEngine {
   constructor(private readonly resolve: PrinterResolver) {}
@@ -35,10 +46,10 @@ export class PrintEngine {
 
   private renderJob(job: PrintJob, printer: PrinterConfig): Buffer {
     if (job.escpos) {
-      // Backend-rendered bytes: still prepend the per-printer code page selection so
-      // the same payload prints correctly on printers configured differently.
-      const prefix = new EscPosBuilder(job.codepage ?? printer.codepage, printer.width).init().build();
-      return Buffer.concat([prefix, Buffer.from(job.escpos, 'base64')]);
+      const payload = Buffer.from(job.escpos, 'base64');
+      // A server-chosen code page keeps the old prefix-only path untouched.
+      if (job.codepage !== undefined) return Buffer.concat([this.legacyPrefix(printer, job.codepage), payload]);
+      return serverTicketBytes(payload, printer, this.legacyPrefix(printer));
     }
     if (job.content) return renderTicket(job.content, printer, job.codepage);
     throw new Error(`İş içeriği boş (${job.jobId})`);
@@ -47,7 +58,18 @@ export class PrintEngine {
   /** `heading` is what the test slip says it is for — "MUTFAK YAZICI" — so it can be matched to the panel. */
   async testPrint(printer: PrinterConfig | undefined, heading: string): Promise<void> {
     if (!printer) throw new PrinterNotConfiguredError(heading);
-    await this.send(printer, renderTestTicket(printer, heading));
+    const slip = serverTicketBytes(serverStyleTestSlip(heading, textTableLabel(printer)), printer, this.legacyPrefix(printer));
+    await this.send(printer, Buffer.concat([slip, calibrationBlock(printer.width, printer.cut)]));
+  }
+
+  /**
+   * `ESC @` + the agent's `codepage`, sent in front of server bytes since
+   * before `textTable` existed. The server's own `ESC @` / `ESC t 91` override it,
+   * so it changes nothing on paper — kept so an untouched config sends the very
+   * same bytes it always has.
+   */
+  private legacyPrefix(printer: PrinterConfig, codepage = printer.codepage): Buffer {
+    return new EscPosBuilder(codepage, printer.width).init().build();
   }
 
   private async send(printer: PrinterConfig, bytes: Buffer): Promise<void> {

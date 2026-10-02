@@ -16,6 +16,7 @@ interface PrinterTargetSpool { kind: 'spooler'; printerName: string }
 interface PrinterConfig {
   target: PrinterTargetNet | PrinterTargetSpool;
   codepage: string;
+  textTable?: string;
   width: 32 | 42 | 48;
   cut: boolean;
 }
@@ -226,7 +227,18 @@ const bridge = (window as unknown as { agent: AgentBridge }).agent;
 
 const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak', CASHIER: 'Kasa' };
 const STATIONS: Station[] = ['BAR', 'KITCHEN', 'CASHIER'];
-const CODEPAGE_OPTIONS = ['CP857', 'ISO8859_9', 'CP1254', 'CP850', 'CP437'];
+/**
+ * Turkish letters on SERVER tickets — the setting that reaches real tickets
+ * (see `TEXT_TABLES` in shared/types). Keys must match it; the label carries
+ * the `ESC t` number because that, not the table name, is what differs between
+ * printers. Letters match the rows on the test slip.
+ */
+const TEXT_TABLE_OPTIONS: ReadonlyArray<[string, string]> = [
+  ['SERVER', 'A) Varsayılan — WPC1254 · 91'],
+  ['PC857_13', 'B) PC857 · 13'],
+  ['WPC1254_48', 'C) WPC1254 · 48'],
+  ['ASCII', 'Türkçe harfsiz (ç → c)'],
+];
 const STATE_TEXT = {
   CONNECTED: ['Bağlı', 'ok'],
   CONNECTING: ['Bağlanıyor…', 'warn'],
@@ -913,10 +925,10 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
   const spoolLabel = label('Yazıcı');
   grid.append(spoolLabel, spoolSelect);
 
-  const cpSelect = document.createElement('select');
-  for (const cp of CODEPAGE_OPTIONS) cpSelect.append(new Option(cp.replace('_', '-'), cp));
-  cpSelect.value = printer?.codepage ?? 'CP857';
-  grid.append(label('Türkçe kod sayfası'), cpSelect);
+  const tableSelect = document.createElement('select');
+  for (const [value, text] of TEXT_TABLE_OPTIONS) tableSelect.append(new Option(text, value));
+  tableSelect.value = TEXT_TABLE_OPTIONS.some(([v]) => v === printer?.textTable) ? printer!.textTable! : 'SERVER';
+  grid.append(label('Türkçe karakterler'), tableSelect);
 
   const widthSelect = document.createElement('select');
   for (const [v, l] of [['42', '80 mm (42 karakter)'], ['32', '58 mm (32 karakter)'], ['48', '80 mm (48 karakter)']]) {
@@ -970,7 +982,9 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
     }
     const res = await o.onSave({
       target,
-      codepage: cpSelect.value,
+      // Not editable any more: it never reached server tickets. Kept as saved.
+      codepage: printer?.codepage ?? 'CP857',
+      textTable: tableSelect.value,
       width: Number(widthSelect.value) as 32 | 42 | 48,
       cut: cutBox.checked,
     });
@@ -986,7 +1000,7 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
     testBtn.disabled = false;
     setMsg(
       msg,
-      res.ok ? 'Test fişi gönderildi. Fişte bu yazıcının adı yazmalı; Türkçe harfleri kontrol edin.' : res.error,
+      res.ok ? 'Test fişi gönderildi. Fişin altındaki A/B/C satırlarından harfleri doğru olanı seçip kaydedin, sonra tekrar test edin.' : res.error,
       res.ok ? 'ok' : 'bad',
     );
   });

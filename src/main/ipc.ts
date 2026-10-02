@@ -1,5 +1,5 @@
 import { BrowserWindow, ipcMain, shell } from 'electron';
-import { isStation } from '../shared/types';
+import { isStation, TEXT_TABLES } from '../shared/types';
 import type { LogEntry, OkcConfig, PrinterConfig, Station } from '../shared/types';
 import type { Agent } from './agent';
 import { envConfig } from './env';
@@ -71,6 +71,7 @@ function assertPrinter(value: unknown): PrinterConfig {
   return {
     target: p.target,
     codepage: typeof p.codepage === 'string' ? p.codepage : 'CP857',
+    ...(typeof p.textTable === 'string' && Object.hasOwn(TEXT_TABLES, p.textTable) ? { textTable: p.textTable } : {}),
     width: ([32, 42, 48] as const).includes(p.width) ? p.width : 42,
     cut: p.cut !== false,
   };

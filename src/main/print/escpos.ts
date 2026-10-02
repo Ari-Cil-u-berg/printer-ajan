@@ -147,26 +147,6 @@ export function renderTicket(ticket: TicketModel, printer: PrinterConfig, codepa
   return b.build();
 }
 
-/** Turkish-character proof sheet used by the "Test yazdır" button. */
-export function renderTestTicket(printer: PrinterConfig, station: string, codepage?: string): Buffer {
-  const cp = codepage ?? printer.codepage;
-  const b = new EscPosBuilder(cp, printer.width).init();
-  b.align('center').style({ bold: true, doubleHeight: true }).line('TEST FİŞİ');
-  b.style().line('Ari Adisyon Yazıcı Ajanı').align('left').rule();
-  b.line(`İstasyon : ${station}`);
-  b.line(`Kod sayfası: ${cp}`);
-  b.line(`Saat     : ${formatTime(new Date().toISOString())}`);
-  b.rule();
-  b.line('Türkçe karakter kontrolü:');
-  b.line('ç ğ ı i ö ş ü  Ç Ğ I İ Ö Ş Ü');
-  b.line('Çilekli Şarap, Ilık Çorba, Öğün');
-  b.rule();
-  b.wrapped('Yukarıdaki harfler doğru görünüyorsa kurulum tamamdır. Bozuk görünüyorsa kod sayfasını değiştirin (CP857 / ISO8859-9 / CP1254).');
-  b.feed(printer.cut ? 3 : 5);
-  if (printer.cut) b.cut();
-  return b.build();
-}
-
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';

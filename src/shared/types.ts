@@ -56,6 +56,40 @@ export const CODEPAGE_ENCODING: Record<string, string> = {
   CP1254: 'win1254',
 };
 
+/**
+ * One character table a printer can be switched to for the Turkish letters in
+ * SERVER-rendered tickets: the `ESC t n` argument and the matching encoding.
+ *
+ * The number is what differs between printers, not the table: the POS-80s in
+ * the field have WPC1254 at 91 and PC857 somewhere broken, the Xprinter
+ * XP-Q90C has no 91 at all and prints PC857 at 13. No number works everywhere,
+ * so the café picks the row that came out right on the test slip.
+ */
+export interface TextTable {
+  n: number;
+  /** iconv-lite name, or 'ascii' to fold ç→c instead of encoding. */
+  encoding: string;
+}
+
+/**
+ * Untouched: the server's bytes go to the printer exactly as they always have.
+ * The default — and what every config saved before `textTable` existed means.
+ */
+export const SERVER_TABLE = 'SERVER';
+
+/**
+ * What the backend's ESC/POS builder emits (`apps/api/src/printing/escpos.builder.ts`,
+ * `CODE_PAGE_ID`): `ESC t 91` and Windows-1254 bytes. The agent only rewrites a
+ * payload that says exactly this; anything else prints as sent.
+ */
+export const SERVER_TEXT_TABLE: TextTable = { n: 91, encoding: 'win1254' };
+
+export const TEXT_TABLES: Record<string, TextTable> = {
+  PC857_13: { n: 13, encoding: 'cp857' },
+  WPC1254_48: { n: 48, encoding: 'win1254' },
+  ASCII: { n: 0, encoding: 'ascii' },
+};
+
 export type PrinterTarget =
   | { kind: 'network'; host: string; port: number }
   | { kind: 'spooler'; printerName: string };
@@ -63,6 +97,13 @@ export type PrinterTarget =
 export interface PrinterConfig {
   target: PrinterTarget;
   codepage: string; // key of CODEPAGES
+  /**
+   * Key of TEXT_TABLES, or SERVER_TABLE / absent to print server tickets as
+   * sent. `codepage` above only ever reached the agent's own slips: the
+   * server's bytes re-select their own table after it, so it never changed a
+   * real ticket. This is the setting that does.
+   */
+  textTable?: string;
   /** Characters per line: 42 for 80mm, 32 for 58mm. */
   width: 32 | 42 | 48;
   /** Cut paper after each ticket. */

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EscPosBuilder, encodeText, foldToAscii, renderTestTicket, renderTicket } from '../dist/main/print/escpos.js';
+import { EscPosBuilder, encodeText, foldToAscii, renderTicket } from '../dist/main/print/escpos.js';
+import { calibrationBlock, serverStyleTestSlip } from '../dist/main/print/server-escpos.js';
 
 const printer = { target: { kind: 'network', host: '1.2.3.4', port: 9100 }, codepage: 'CP857', width: 42, cut: true };
 
@@ -66,13 +67,14 @@ test('ticket renders header, items, notes and a cut', () => {
   assert.ok(bytes.includes(Buffer.from([0x1d, 0x56, 66])));
 });
 
-test('test ticket contains the Turkish proof line', () => {
-  const text = renderTestTicket(printer, 'BAR').toString('latin1');
-  assert.ok(text.includes('TEST F'));
-  assert.ok(text.includes('CP857'));
+test('test slip is built like a server ticket and lists every table to compare', () => {
+  const slip = serverStyleTestSlip('BAR', 'PC857 · 13');
+  assert.deepEqual([...slip.subarray(0, 5)], [0x1b, 0x40, 0x1b, 0x74, 91]);
+  const block = calibrationBlock(42, true).toString('latin1');
+  for (const row of ['A) Varsayilan (WPC1254 91)', 'B) PC857 13', 'C) WPC1254 48']) assert.ok(block.includes(row), row);
+  assert.ok(calibrationBlock(42, true).includes(Buffer.from([0x1d, 0x56, 66])));
 });
 
 test('cut:false omits the cut command', () => {
-  const bytes = renderTestTicket({ ...printer, cut: false }, 'BAR');
-  assert.ok(!bytes.includes(Buffer.from([0x1d, 0x56, 66])));
+  assert.ok(!calibrationBlock(42, false).includes(Buffer.from([0x1d, 0x56, 66])));
 });
