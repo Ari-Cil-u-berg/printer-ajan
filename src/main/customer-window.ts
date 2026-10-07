@@ -1,5 +1,6 @@
 import { BrowserWindow, screen, type Display } from 'electron';
 import path from 'node:path';
+import { type DisplayFingerprint, fingerprintOf, matchDisplay, sameFingerprint } from './display-match';
 import { log } from './logger';
 
 /**
@@ -30,12 +31,19 @@ export interface DisplayView {
   selected: boolean;
 }
 
+/** Kaydedilen seçim: id + monitörün izi (id Windows'ta kalıcı değil, bkz. display-match.ts). */
+export interface DisplaySelection {
+  id?: number;
+  fingerprint?: DisplayFingerprint;
+}
+
 export class CustomerWindow {
   private win: BrowserWindow | null = null;
   private lastState: unknown = null;
 
   constructor(
-    private readonly selectedDisplayId: () => number | undefined,
+    private readonly selection: () => DisplaySelection,
+    private readonly remember: (id: number, fingerprint: DisplayFingerprint) => void,
     private readonly posOrigin: () => Promise<string | null>,
   ) {
     // Monitör çıkarılıp takılınca pencereyi seçilen monitöre geri koy.
@@ -46,7 +54,7 @@ export class CustomerWindow {
 
   /** Monitörler, soldan sağa — "Ekran 1, 2…" numarası bu sıradan. */
   displays(): DisplayView[] {
-    const selected = this.selectedDisplayId();
+    const selected = this.targetDisplay()?.id;
     const primary = screen.getPrimaryDisplay().id;
     return ordered().map((display, index) => ({
       id: display.id,
@@ -63,8 +71,14 @@ export class CustomerWindow {
   }
 
   configured(): boolean {
-    const id = this.selectedDisplayId();
-    return id !== undefined && screen.getAllDisplays().some((display) => display.id === id);
+    return this.targetDisplay() !== null;
+  }
+
+  /** Seçimi kaydeder: id ve monitörün izi. */
+  select(id: number): void {
+    const display = screen.getAllDisplays().find((d) => d.id === id);
+    if (!display) throw new Error('Geçersiz ekran');
+    this.remember(id, fingerprintOf(display, screen.getPrimaryDisplay().id));
   }
 
   /** Açar ya da zaten açıksa doğru monitöre taşıyıp öne getirir. */
@@ -165,10 +179,23 @@ export class CustomerWindow {
     });
   }
 
+  /**
+   * Seçilen monitör. Id değişmişse izle bulunur ve yeni id + güncel iz
+   * kaydedilir (bir sonraki sefer doğrudan id tutar). Eski kayıtta iz yoksa id
+   * tutunca iz eklenir. Disk yalnızca bir şey değiştiyse yazılır — POS bunu
+   * sık sık yokluyor.
+   */
   private targetDisplay(): Display | null {
-    const all = ordered();
-    const chosen = all.find((display) => display.id === this.selectedDisplayId());
-    return chosen ?? null;
+    const saved = this.selection();
+    const primaryId = screen.getPrimaryDisplay().id;
+    const chosen = matchDisplay(screen.getAllDisplays(), primaryId, saved.id, saved.fingerprint);
+    if (!chosen) return null;
+    const fingerprint = fingerprintOf(chosen, primaryId);
+    if (chosen.id !== saved.id || !sameFingerprint(saved.fingerprint, fingerprint)) {
+      if (chosen.id !== saved.id) log.info('customer display re-identified', { from: saved.id, to: chosen.id });
+      this.remember(chosen.id, fingerprint);
+    }
+    return chosen;
   }
 
   /** Monitöre koy ve tam ekran yap. Windows'ta önce çıkıp sonra girmek şart. */

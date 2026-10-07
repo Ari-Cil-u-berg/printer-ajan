@@ -61,7 +61,11 @@ async function main(): Promise<void> {
   const posOrigin = (): Promise<string | null> => resolvePosOrigin(config);
   // Müşteri ekranı: seçilen monitörde ajanın açtığı pencere + POS sekmesinin
   // ona ulaştığı yerel köprü (bkz. customer-window.ts, local-bridge.ts).
-  const customerWindow = new CustomerWindow(() => config.get().customerDisplayId, posOrigin);
+  const customerWindow = new CustomerWindow(
+    () => ({ id: config.get().customerDisplayId, fingerprint: config.get().customerDisplay }),
+    (id, fingerprint) => config.update({ customerDisplayId: id, customerDisplay: fingerprint }),
+    posOrigin,
+  );
   startLocalBridge({
     posOrigin,
     status: () => ({ configured: customerWindow.configured(), open: customerWindow.isOpen() }),

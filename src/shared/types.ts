@@ -256,6 +256,19 @@ export interface AgentConfig {
   bridge?: BridgePairing;
   /** Müşteri ekranının açılacağı monitör (Electron `Display.id`). Seçilmediyse yok. */
   customerDisplayId?: number;
+  /**
+   * Seçilen monitörün izi (ad, konum, boyut, birincil mi). `Display.id`
+   * Windows'ta yeniden başlatma/uykuyla değişebildiği için monitör bununla
+   * yeniden bulunur — bkz. main/display-match.ts.
+   */
+  customerDisplay?: {
+    label: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    primary: boolean;
+  };
   /** Sunucunun son bildirdiği POS kökeni — internetsiz açılışta kullanılır, okunurken yeniden doğrulanır. */
   lastPosOrigin?: string;
 }

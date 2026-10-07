@@ -328,10 +328,8 @@ export function registerIpc(
   ipcMain.handle('customerDisplay:displays', () => guard(() => customerWindow.displays()));
   ipcMain.handle('customerDisplay:select', (_e, id: unknown) =>
     guard(() => {
-      if (typeof id !== 'number' || !customerWindow.displays().some((d) => d.id === id)) {
-        throw new Error('Geçersiz ekran');
-      }
-      agent.config.update({ customerDisplayId: id });
+      if (typeof id !== 'number') throw new Error('Geçersiz ekran');
+      customerWindow.select(id);
       return customerWindow.displays();
     }),
   );
