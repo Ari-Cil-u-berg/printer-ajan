@@ -229,7 +229,7 @@ const STATION_LABEL: Record<Station, string> = { BAR: 'Bar', KITCHEN: 'Mutfak', 
 const STATIONS: Station[] = ['BAR', 'KITCHEN', 'CASHIER'];
 /**
  * Turkish letters on SERVER tickets — the setting that reaches real tickets
- * (see `TEXT_TABLES` in shared/types). Keys must match it; the label carries
+ * (see `TEXT_TABLES` / `RASTER_TABLE` in shared/types). Keys must match it; the label carries
  * the `ESC t` number because that, not the table name, is what differs between
  * printers. Letters match the rows on the test slip.
  */
@@ -237,6 +237,10 @@ const TEXT_TABLE_OPTIONS: ReadonlyArray<[string, string]> = [
   ['SERVER', 'A) Varsayılan — WPC1254 · 91'],
   ['PC857_13', 'B) PC857 · 13'],
   ['WPC1254_48', 'C) WPC1254 · 48'],
+  ['FS_WPC1254_91', 'D1) Çince mod kapalı + WPC1254 · 91'],
+  ['FS_PC857_13', 'D2) Çince mod kapalı + PC857 · 13'],
+  ['FS_WPC1254_48', 'D3) Çince mod kapalı + WPC1254 · 48'],
+  ['RASTER', 'E) Görüntü olarak — her yazıcıda, daha yavaş'],
   ['ASCII', 'Türkçe harfsiz (ç → c)'],
 ];
 const STATE_TEXT = {

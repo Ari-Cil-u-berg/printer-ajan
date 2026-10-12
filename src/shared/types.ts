@@ -69,6 +69,14 @@ export interface TextTable {
   n: number;
   /** iconv-lite name, or 'ascii' to fold ç→c instead of encoding. */
   encoding: string;
+  /**
+   * Send `FS .` (cancel Chinese/Kanji mode) after every `ESC @`. Chinese-made
+   * printers (Xprinter, Sunlux…) can power on in double-byte mode, where every
+   * byte ≥ 0x80 pairs up into a Chinese character and NO `ESC t` table is ever
+   * read — which is how A, B and C can all come out wrong on the same printer.
+   * After `ESC @` because that restores the power-on mode.
+   */
+  cancelKanji?: boolean;
 }
 
 /**
@@ -88,7 +96,24 @@ export const TEXT_TABLES: Record<string, TextTable> = {
   PC857_13: { n: 13, encoding: 'cp857' },
   WPC1254_48: { n: 48, encoding: 'win1254' },
   ASCII: { n: 0, encoding: 'ascii' },
+  // D1–D3: the same three tables with Chinese mode switched off first.
+  FS_WPC1254_91: { n: 91, encoding: 'win1254', cancelKanji: true },
+  FS_PC857_13: { n: 13, encoding: 'cp857', cancelKanji: true },
+  FS_WPC1254_48: { n: 48, encoding: 'win1254', cancelKanji: true },
 };
+
+/**
+ * E: no character table at all — the agent draws every line itself and sends
+ * it as a `GS v 0` image, so the letters come out right on any printer that
+ * can print the logo. Heavier (tens of KB a ticket instead of ~2) and never
+ * the default; for printers where no table above works.
+ */
+export const RASTER_TABLE = 'RASTER';
+
+/** A `textTable` value the agent knows how to apply. */
+export function isTextTableSetting(value: unknown): value is string {
+  return typeof value === 'string' && (Object.hasOwn(TEXT_TABLES, value) || value === RASTER_TABLE);
+}
 
 export type PrinterTarget =
   | { kind: 'network'; host: string; port: number }
@@ -98,7 +123,7 @@ export interface PrinterConfig {
   target: PrinterTarget;
   codepage: string; // key of CODEPAGES
   /**
-   * Key of TEXT_TABLES, or SERVER_TABLE / absent to print server tickets as
+   * Key of TEXT_TABLES, RASTER_TABLE, or SERVER_TABLE / absent to print server tickets as
    * sent. `codepage` above only ever reached the agent's own slips: the
    * server's bytes re-select their own table after it, so it never changed a
    * real ticket. This is the setting that does.

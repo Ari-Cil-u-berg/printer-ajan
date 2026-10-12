@@ -22,6 +22,10 @@ export type PrinterResolver = (job: PrintJob) => { printer: PrinterConfig | unde
 const TABLE_LABEL: Record<string, string> = {
   PC857_13: 'PC857 · 13',
   WPC1254_48: 'WPC1254 · 48',
+  FS_WPC1254_91: 'Çince kapalı · WPC1254 · 91',
+  FS_PC857_13: 'Çince kapalı · PC857 · 13',
+  FS_WPC1254_48: 'Çince kapalı · WPC1254 · 48',
+  RASTER: 'Görüntü olarak',
   ASCII: 'Türkçe harfsiz',
 };
 

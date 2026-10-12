@@ -1,4 +1,4 @@
-// Copies non-TS files that tsc ignores into dist/ (renderer HTML/CSS, ps1, icons).
+// Copies non-TS files that tsc ignores into dist/ (renderer HTML/CSS, ps1, icons, licences).
 import { cp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,8 @@ const copies = [
   ['assets/tray.png', 'dist/main/assets/tray.png'],
   ['assets/trayTemplate.png', 'dist/main/assets/trayTemplate.png'],
   ['assets/trayTemplate@2x.png', 'dist/main/assets/trayTemplate@2x.png'],
+  // The OFL travels with the glyphs in receipt-font.ts.
+  ['assets/fonts/OFL-terminus.txt', 'dist/main/assets/OFL-terminus.txt'],
 ];
 
 // A plain `npm run build` is environment-neutral: drop any environment baked in by an
