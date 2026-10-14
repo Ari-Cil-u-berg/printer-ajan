@@ -395,11 +395,6 @@ export interface OkcHealth {
   openDocumentId?: string;
   /** Ajanda kapatılmayı bekleyen satış varsa kimliği. */
   pendingSale?: string;
-  /**
-   * Açık PARÇALI fiş: hesap bölüşülerek ödeniyor, kalan bekleniyor. Bu
-   * sırada cihaz başka belge açamaz — panel bunu söyler.
-   */
-  openSplit?: { key: string; documentId: string; cardPayments: number; startedAt: string };
   error?: string;
   checkedAt?: string;
 }
@@ -476,40 +471,6 @@ export interface OkcSaleRequest {
 }
 
 /**
- * TEK FİŞ, ÇOK ÖDEME — bir parçanın emri (`HUGIN_PCLINK_SPLIT_V1`).
- *
- * Masa hesabı bölüşerek öderken her parça (kart ya da nakit) AYNI açık fişe
- * eklenir; fiş, kalanı kapatan son parçada bütün kalemler ve bütün ödemelerle
- * kapanır. Belge yine backend'de kurulur — ajan yalnızca hangi açık belgeye
- * hangi ödemenin ekleneceğini bilir.
- */
-export interface OkcSplitRequest {
-  saleId: string;
-  /**
-   * Açık fişin SAHİBİ — adisyonun kimliği. Başka bir adisyonun parçası bu
-   * fişe eklenmez: yanlış masanın ödemesi yanlış fişe yazılmış olurdu.
-   */
-  key: string;
-  /** Bu parçanın ödemesi. Nakitte cihaza bir şey gitmez, yalnızca son belgeye yazılır. */
-  payment: { type: 'CARD' | 'CASH'; amount: string };
-  /**
-   * SON PARÇA: `PUT /v1/documents/{id}` gövdesi — bütün kalemler, bütün
-   * ödemeler. Yoksa fiş açık kalır ve sonraki parçayı bekler.
-   */
-  document?: Record<string, unknown>;
-  taxId?: string;
-}
-
-/** Ajanın diskte tuttuğu açık parçalı fiş — çökmede kaybolmasın. */
-export interface OkcSplitState {
-  key: string;
-  documentId: string;
-  /** Cihazın bu belgede ÇEKTİĞİ kart ödemeleri. */
-  payments: { saleId: string; amount: string; transactionId?: string; authorizationCode?: string }[];
-  startedAt: string;
-}
-
-/**
  * Satışın sonucu.
  *
  * `UNKNOWN` birinci sınıf bir durumdur, hata değil: cevabı kaybolmuş bir satış
@@ -525,11 +486,6 @@ export interface OkcSaleResult {
   error?: string;
   /** Cihazın `ERR_*` kodu, geldiyse. */
   code?: string;
-  /**
-   * Parçalı fişte kart parçasının banka referansı (provizyon / işlem no).
-   * Fiş henüz kapanmadığı için `receiptNo` yok; mutabakat bununla yapılır.
-   */
-  transactionRef?: string;
 }
 
 export interface PairingView extends PrinterPairing {

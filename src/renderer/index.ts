@@ -45,7 +45,6 @@ interface OkcHealth {
   hasOpenDocument?: boolean;
   openDocumentId?: string;
   pendingSale?: string;
-  openSplit?: { key: string; documentId: string; cardPayments: number; startedAt: string };
   error?: string;
   checkedAt?: string;
 }
@@ -385,10 +384,6 @@ function renderMetrics(s: StatusSnapshot): void {
     okcEl.textContent = 'Bekleyen fiş';
     okcEl.className = 'metric-value bad';
     navDot('navDotOkc', 'bad');
-  } else if (h.openSplit) {
-    okcEl.textContent = 'Bölüşülen fiş açık';
-    okcEl.className = 'metric-value warn';
-    navDot('navDotOkc', 'warn');
   } else if (h.ok) {
     okcEl.textContent = h.hasOpenDocument ? 'Açık belge' : 'Hazır';
     okcEl.className = `metric-value ${h.hasOpenDocument ? 'warn' : 'ok'}`;
@@ -497,20 +492,11 @@ function renderOkc(s: StatusSnapshot): void {
   // İkincisini göstermemek, cihazın "uygun durumda değil" demesine sebep olan
   // belgeyi kasiyerden gizlemek olurdu — kurtarmanın tek yolu cihazın başına
   // gitmek olurdu.
-  //   - `openSplit`: hesap BÖLÜŞÜLEREK ödeniyor, fiş bilerek açık. Sahipsiz
-  //     değil; kalan kasadan alınınca kapanır. Kart çekildiyse iptal yok.
   const pending = Boolean(h.pendingSale);
-  const split = !pending ? h.openSplit : undefined;
-  const orphan = !pending && !split && Boolean(h.openDocumentId);
-  $('okcPendingCard').classList.toggle('hidden', !pending && !orphan && !split);
+  const orphan = !pending && Boolean(h.openDocumentId);
+  $('okcPendingCard').classList.toggle('hidden', !pending && !orphan);
   $('okcRetryBtn').classList.toggle('hidden', !pending);
-  $('okcCancelBtn').classList.toggle('hidden', Boolean(split && split.cardPayments > 0));
-  if (split) {
-    $('okcPendingText').textContent =
-      split.cardPayments > 0
-        ? `Hesap bölüşülerek ödeniyor: ${split.cardPayments} kart alındı, kalan bekleniyor. Fiş, kalan kasadan alınınca kapanır; bu sırada yazarkasa başka fiş kesemez. Alınmış kart olduğu için iptal edilemez.`
-        : 'Hesap bölüşülerek ödeniyor, kalan bekleniyor. Fiş, kalan kasadan alınınca kapanır; bu sırada yazarkasa başka fiş kesemez.';
-  } else if (pending) {
+  if (pending) {
     $('okcPendingText').textContent =
       'Bu ajanda kapatılamamış bir mali belge var. Ödeme alınmış olabilir — önce "Tekrar dene" deneyin, fiş kesilmediyse iptal edin. Yeni satış başlatmayın.';
   } else if (orphan) {
