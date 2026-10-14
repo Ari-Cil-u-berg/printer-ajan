@@ -11,6 +11,8 @@ import type {
   OkcIdentityProbe,
   OkcSaleRequest,
   OkcSaleResult,
+  OkcSplitRequest,
+  OkcSplitState,
 } from '../../shared/types';
 import { atomicWrite } from '../fsutil';
 import { log } from '../logger';
@@ -54,6 +56,8 @@ export class OkcManager extends EventEmitter {
   private health: OkcHealth = { configured: false };
   private healthTimer: NodeJS.Timeout | null = null;
   private readonly pendingPath: string;
+  /** Açık parçalı fiş (tek fiş, çok ödeme) — bkz. `sellSplit`. */
+  private readonly splitPath: string;
   /** Aynı anda tek satış: cihaz da tek belge açabiliyor. */
   private busy = false;
   /**
@@ -72,6 +76,7 @@ export class OkcManager extends EventEmitter {
   ) {
     super();
     this.pendingPath = path.join(dataDir, 'okc-pending.json');
+    this.splitPath = path.join(dataDir, 'okc-split.json');
     this.rebuild();
   }
 
@@ -211,6 +216,7 @@ export class OkcManager extends EventEmitter {
         // Numarayı cihazdan alıp iptali kasiyere açıyoruz; alternatif, cihazın
         // başına gidip menüden temizlemek.
         ...(openDocumentId ? { openDocumentId } : {}),
+        ...this.splitHealth(),
         checkedAt: new Date().toISOString(),
         pendingSale: this.readPending()?.saleId,
       };
@@ -219,6 +225,7 @@ export class OkcManager extends EventEmitter {
         configured: true,
         ok: false,
         error: err instanceof Error ? err.message : 'Bağlantı hatası',
+        ...this.splitHealth(),
         checkedAt: new Date().toISOString(),
         pendingSale: this.readPending()?.saleId,
       };
@@ -392,6 +399,11 @@ export class OkcManager extends EventEmitter {
       // yanlış fişin yanlış masaya kesilmesinin yoludur.
       return { saleId: request.saleId, status: 'DECLINED', error: 'Yazarkasa meşgul' };
     }
+    if (this.readSplit()) {
+      // Açık parçalı fiş varken cihaz yeni belge açamaz; açmayı denemek
+      // cihazdan anlaşılmaz bir "uygun durumda değil" almak olurdu.
+      return { saleId: request.saleId, status: 'DECLINED', error: OPEN_SPLIT_ERROR };
+    }
 
     /**
      * VKN'NİN DOĞRULUK KAYNAĞI CİHAZDIR, SUNUCU DEĞİL.
@@ -545,6 +557,195 @@ export class OkcManager extends EventEmitter {
   }
 
   /**
+   * TEK FİŞ, ÇOK ÖDEME — bir parça.
+   *
+   * Hesap bölüşülerek ödenirken her parça AYNI açık belgeye eklenir: kart
+   * parçası `Parçalı Ödeme Ekle` ile cihazda çekilir, nakit parça cihaza
+   * hiç gitmez (son belgede yazılır). Kalanı kapatan SON parça belgeyi
+   * bütün kalemler ve bütün ödemelerle sonlandırır.
+   *
+   * BELGE DİSKE YAZILIR (`okc-split.json`): parçalar arasında ajan kapanırsa
+   * açık belgenin kimliği ve çekilmiş kartlar kaybolmamalı. Kayıt yalnızca
+   * belge KAPANINCA ya da (hiç ödeme alınmamışken) iptal edilince silinir.
+   *
+   * SAHİPLİK: açık belge bir adisyona aittir (`key`). Başka adisyonun parçası
+   * ya da tek seferlik satışı reddedilir — cihaz zaten ikinci belge açamaz ve
+   * yanlış masanın ödemesi yanlış fişe yazılırdı.
+   */
+  async sellSplit(request: OkcSplitRequest): Promise<OkcSaleResult> {
+    if (!this.client) {
+      return { saleId: request.saleId, status: 'DECLINED', error: 'Yazarkasa tanımlanmadı' };
+    }
+    if (this.busy) {
+      return { saleId: request.saleId, status: 'DECLINED', error: 'Yazarkasa meşgul' };
+    }
+    const fromServer = digitsOf(request.taxId);
+    if (fromServer && !digitsOf(this.config?.softwareId)) this.syncSoftwareId(fromServer, 'sunucu');
+
+    this.busy = true;
+    try {
+      return await this.runSplit(request);
+    } finally {
+      this.busy = false;
+      this.emit('changed');
+      void this.refreshHealth();
+    }
+  }
+
+  private async runSplit(request: OkcSplitRequest): Promise<OkcSaleResult> {
+    const client = this.client;
+    if (!client) return { saleId: request.saleId, status: 'DECLINED', error: 'Yazarkasa tanımlanmadı' };
+
+    let state = this.readSplit();
+    if (state && state.key !== request.key) {
+      return { saleId: request.saleId, status: 'DECLINED', error: OPEN_SPLIT_ERROR };
+    }
+
+    // 1) Açık belge yoksa aç.
+    if (!state) {
+      if (this.readPending()) {
+        return {
+          saleId: request.saleId,
+          status: 'DECLINED',
+          error: 'Yazarkasada yarım kalmış bir belge var — ajanın Yazarkasa panelinden tamamlayın',
+        };
+      }
+      try {
+        const started = await client.startDocument('SALE');
+        this.rememberFingerprint(started.fingerprint);
+        const id = started.data.documentId;
+        if (!id) {
+          return {
+            saleId: request.saleId,
+            status: 'DECLINED',
+            error: errorText(started.body) ?? 'Yazarkasa belge açmadı',
+            ...(started.body.error?.code ? { code: started.body.error.code } : {}),
+          };
+        }
+        state = { key: request.key, documentId: id, payments: [], startedAt: new Date().toISOString() };
+        this.writeSplit(state);
+      } catch (err) {
+        return {
+          saleId: request.saleId,
+          status: 'DECLINED',
+          error: err instanceof Error ? err.message : 'Belge açılamadı',
+          ...(err instanceof PcLinkError && err.code ? { code: err.code } : {}),
+        };
+      }
+    }
+    const { documentId } = state;
+
+    // 2) Kart parçası: cihazda çek.
+    let collected: OkcSplitState['payments'][number] | null = null;
+    if (request.payment.type === 'CARD') {
+      const abort = new AbortController();
+      this.active = { saleId: request.saleId, documentId, abort };
+      let response: Awaited<ReturnType<PcLinkClient['addCardPayment']>>;
+      try {
+        response = await client.addCardPayment(documentId, request.payment.amount, abort.signal);
+        this.rememberFingerprint(response.fingerprint);
+      } catch (err) {
+        // Kasadan iptal: `cancelSale` belgeyi YALNIZCA hiç ödeme yokken
+        // kapatıyor — yani burada para çekilmedi, belge de kapandı.
+        if (err instanceof PcLinkError && err.code === 'ERR_ABORTED') {
+          this.clearSplit();
+          return { saleId: request.saleId, status: 'DECLINED', documentId, error: 'Kasadan iptal edildi' };
+        }
+        log.warn('okc parçalı ödeme cevabı alınamadı', { saleId: request.saleId, documentId });
+        return {
+          saleId: request.saleId,
+          status: 'UNKNOWN',
+          documentId,
+          error: err instanceof Error ? err.message : 'Yazarkasa cevabı alınamadı',
+        };
+      } finally {
+        this.active = null;
+      }
+
+      if (response.httpStatus !== 200) {
+        // Kart çekilmedi (yetersiz bakiye, vazgeçildi). Belgede başka ödeme
+        // yoksa belgeyi kapatıp cihazı boşa çıkarıyoruz; varsa belge açık
+        // kalır — kalan başka bir kartla ya da nakitle tamamlanır.
+        if (state.payments.length === 0) {
+          const cancelled = await this.cancelQuietly(client, documentId);
+          if (cancelled) this.clearSplit();
+        }
+        return {
+          saleId: request.saleId,
+          status: 'DECLINED',
+          documentId,
+          error: errorText(response.body) ?? 'Kart ödemesi alınamadı',
+          ...(response.body.error?.code ? { code: response.body.error.code } : {}),
+        };
+      }
+
+      const data = response.data;
+      collected = {
+        saleId: request.saleId,
+        amount: request.payment.amount,
+        ...(data.transactionId !== undefined ? { transactionId: String(data.transactionId) } : {}),
+        ...(data.authorizationCode ? { authorizationCode: data.authorizationCode } : {}),
+      };
+      state = { ...state, payments: [...state.payments, collected] };
+      this.writeSplit(state);
+    }
+
+    const transactionRef = collected?.authorizationCode ?? collected?.transactionId;
+
+    // 3) Son parça değilse fiş açık kalır.
+    if (!request.document) {
+      return {
+        saleId: request.saleId,
+        status: 'APPROVED',
+        documentId,
+        ...(transactionRef ? { transactionRef } : {}),
+      };
+    }
+
+    // 4) Son parça: belgeyi bütün kalemler ve ödemelerle kapat. `206`
+    //    kurtarması tek seferlik satışla aynı kayıttan (`okc-pending.json`).
+    this.writePending({
+      saleId: request.saleId,
+      documentId,
+      document: request.document,
+      startedAt: new Date().toISOString(),
+    });
+    try {
+      const result = await this.finalize(client, documentId, request.document);
+      if (result.status === 'APPROVED') {
+        this.clearPending();
+        this.clearSplit();
+        return { saleId: request.saleId, ...result, ...(transactionRef ? { transactionRef } : {}) };
+      }
+      if (result.status === 'DECLINED' && !collected) {
+        // Nakit son parça: cihazda para hareketi yok. Belge açık kalır
+        // (önceki kartlar alınmış), kasiyer yeniden deneyebilir.
+        this.clearPending();
+        return { saleId: request.saleId, ...result };
+      }
+      // Kart bu istekte ÇEKİLDİ ama belge kapanmadı: ret değil, belirsizlik.
+      // Kurtarma kaydı duruyor; Yazarkasa panelinden "Tekrar dene".
+      return {
+        saleId: request.saleId,
+        status: 'UNKNOWN',
+        documentId,
+        error: result.error
+          ? `Ödeme alındı, fiş kapatılamadı: ${result.error}`
+          : 'Ödeme alındı, fiş kapatılamadı — tekrar deneyin',
+        ...(transactionRef ? { transactionRef } : {}),
+      };
+    } catch (err) {
+      log.warn('okc parçalı fiş sonlandırma belirsiz', { saleId: request.saleId, documentId });
+      return {
+        saleId: request.saleId,
+        status: 'UNKNOWN',
+        documentId,
+        error: err instanceof Error ? err.message : 'Yazarkasa cevabı alınamadı',
+      };
+    }
+  }
+
+  /**
    * Kasadan gelen iptal — cihazı BEKLETMEDEN durdurur.
    *
    * SIRA ÖNEMLİ: önce cihazda `Belge İptal`, sonra bekleyen `Belge Sonlandır`
@@ -572,6 +773,14 @@ export class OkcManager extends EventEmitter {
           : undefined;
     if (!documentId) return { ok: false, error: 'Bu satış cihazda beklemiyor' };
 
+    // PARÇALI FİŞTE ALINMIŞ KART VARSA BELGE İPTAL EDİLMEZ. Hugin birden fazla
+    // kartlı belgeyi zaten reddediyor ("kalan ödeme yapılarak tamamlanmalı");
+    // tek kartlıda ise iptal, alınmış ödemenin fişini silmek olurdu.
+    const split = this.readSplit();
+    if (split && split.documentId === documentId && split.payments.length > 0) {
+      return { ok: false, error: SPLIT_LOCKED_ERROR };
+    }
+
     try {
       const response = await client.cancelDocument(documentId);
       if (response.httpStatus !== 200) {
@@ -582,6 +791,7 @@ export class OkcManager extends EventEmitter {
     }
 
     log.info('okc satış kasadan iptal edildi', { saleId, documentId });
+    if (split?.documentId === documentId) this.clearSplit();
     if (active?.saleId === saleId) active.abort.abort();
     else this.clearPending();
     void this.refreshHealth();
@@ -854,8 +1064,12 @@ export class OkcManager extends EventEmitter {
     // da odur. Kaydımız yoksa cihazın bildirdiği açık belgeye düşüyoruz —
     // sahipsiz kalmış bir belgeyi kapatmak, cihazı yeniden satışa açmanın tek
     // yolu ve bunu kasiyerin yapabilmesi gerekiyor.
-    const documentId = this.readPending()?.documentId ?? this.health.openDocumentId;
+    const split = this.readSplit();
+    const documentId = this.readPending()?.documentId ?? split?.documentId ?? this.health.openDocumentId;
     if (!documentId) return { ok: false, error: 'Bekleyen belge yok' };
+    if (split && split.documentId === documentId && split.payments.length > 0) {
+      return { ok: false, error: SPLIT_LOCKED_ERROR };
+    }
     try {
       /*
        * CİHAZ KABUL ETMEDİYSE KAYIT SİLİNMEZ.
@@ -879,6 +1093,7 @@ export class OkcManager extends EventEmitter {
         return { ok: false, error };
       }
       this.clearPending();
+      if (split?.documentId === documentId) this.clearSplit();
       log.info('okc bekleyen belge iptal edildi', { documentId });
       void this.refreshHealth();
       return { ok: true };
@@ -915,6 +1130,7 @@ export class OkcManager extends EventEmitter {
         if (cancelled) this.clearPending();
       } else if (result.status === 'APPROVED') {
         this.clearPending();
+        if (this.readSplit()?.documentId === pending.documentId) this.clearSplit();
       }
       return { saleId: pending.saleId, ...result };
     } catch (err) {
@@ -1042,7 +1258,49 @@ export class OkcManager extends EventEmitter {
       /* zaten yok */
     }
   }
+
+  private readSplit(): OkcSplitState | null {
+    try {
+      return JSON.parse(fs.readFileSync(this.splitPath, 'utf8')) as OkcSplitState;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeSplit(state: OkcSplitState): void {
+    atomicWrite(this.splitPath, JSON.stringify(state));
+  }
+
+  private clearSplit(): void {
+    try {
+      fs.rmSync(this.splitPath, { force: true });
+    } catch {
+      /* zaten yok */
+    }
+  }
+
+  /** Sağlık görünümü için açık parçalı fiş — panel "kalan bekleniyor" der. */
+  private splitHealth(): Pick<OkcHealth, 'openSplit'> {
+    const split = this.readSplit();
+    return split
+      ? {
+          openSplit: {
+            key: split.key,
+            documentId: split.documentId,
+            cardPayments: split.payments.length,
+            startedAt: split.startedAt,
+          },
+        }
+      : {};
+  }
 }
+
+/** Başka adisyonun açık parçalı fişi varken gelen satış. */
+const OPEN_SPLIT_ERROR =
+  'Yazarkasada bölüşülerek ödenen açık bir fiş var — önce o adisyonun kalanını tamamlayın';
+/** Parçalı fişte kart çekilmişken iptal. */
+const SPLIT_LOCKED_ERROR =
+  'Açık fişte alınmış kart ödemesi var — iptal edilemez, kalan ödenerek tamamlanmalı';
 
 /**
  * Vergi kimliğini karşılaştırılabilir hâle getirir: yalnızca rakamlar.

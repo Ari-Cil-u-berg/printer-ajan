@@ -311,6 +311,11 @@ export class Agent extends EventEmitter {
         this.recordSale(result);
         return result;
       },
+      sellSplit: async (input) => {
+        const result = await this.okc.sellSplit(input);
+        this.recordSale(result);
+        return result;
+      },
       // Yalnızca BİZİM işlemimiz sorulur; başka bir satışın sonucu buradan
       // dönmez (bkz. `BridgeLink.onQuery`).
       lookup: (saleId) =>
