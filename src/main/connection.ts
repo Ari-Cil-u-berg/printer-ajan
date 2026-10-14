@@ -182,6 +182,9 @@ export class ConnectionManager extends EventEmitter {
         break;
       case 'pong':
         break;
+      case 'offline.dirty':
+        this.emit('offline.dirty');
+        break;
     }
   }
 

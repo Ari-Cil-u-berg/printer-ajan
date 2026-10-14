@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, safeStorage, shell, Tray } from 'electron';
 import path from 'node:path';
 import { STATIONS } from '../shared/types';
 import type { ConnectionState, Station, StatusSnapshot } from '../shared/types';
@@ -72,6 +72,16 @@ async function main(): Promise<void> {
     open: () => customerWindow.open(),
     close: () => customerWindow.close(),
     state: (payload) => customerWindow.pushState(payload),
+  });
+  // İnternet kesilince yerel merkez. Veri diskte yalnızca işletim sistemi
+  // şifrelemesiyle (DPAPI / Keychain); yoksa bellekte kalır.
+  agent.enableOfflineHub({
+    posOrigin,
+    cipher: {
+      available: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (plain) => safeStorage.encryptString(plain),
+      decrypt: (data) => safeStorage.decryptString(data),
+    },
   });
   registerIpc(agent, () => window, customerWindow);
   streamLogsToWindow(() => window);

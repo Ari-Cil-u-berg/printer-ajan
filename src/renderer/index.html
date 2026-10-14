@@ -156,6 +156,23 @@
               </dl>
             </section>
 
+            <!--
+              İNTERNET KESİLİNCE: bu bilgisayar şubenin yerel merkezi seçildiyse
+              (Yönetim → Donanım → İnternet kesilince) kesintide garsonların
+              ve kasanın siparişi buraya gelir. Seçilmediyse kart gizli.
+            -->
+            <section class="card hidden" id="offlineCard">
+              <h2>İnternet kesilince</h2>
+              <p class="help">Bu bilgisayar şubenin <b>yerel merkezi</b>. İnternet gidince siparişler buraya gelir, fişleri bu bilgisayar basar; internet gelince buluta aktarılır. Bilgisayarı kapatmayın.</p>
+              <dl class="kv">
+                <dt>Durum</dt><dd id="offlineMode">—</dd>
+                <dt>Bekleyen işlem</dt><dd id="offlinePending">—</dd>
+                <dt>İşlenemeyen</dt><dd id="offlineRejected">—</dd>
+                <dt>Son veri</dt><dd id="offlineSnapshot">—</dd>
+                <dt>Adres</dt><dd id="offlineAddress" class="mono">—</dd>
+              </dl>
+            </section>
+
             <section class="card">
               <h2>Bu bilgisayar</h2>
               <dl class="kv">

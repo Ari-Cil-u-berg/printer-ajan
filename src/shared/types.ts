@@ -140,16 +140,21 @@ export interface TicketItem {
   name: string;
   note?: string;
   options?: string[];
+  /** Satır tutarı ("200,00") — yalnızca hesap fişinde (BILL). */
+  price?: string;
 }
 
 export interface TicketModel {
-  kind: 'ORDER' | 'REPRINT' | 'CANCELLATION';
+  /** BILL: çevrimdışı hesap fişi (yerel merkez basar; fiyat ve toplamlarla). */
+  kind: 'ORDER' | 'REPRINT' | 'CANCELLATION' | 'BILL';
   station: Station;
   orderNo: string;
   tableName?: string;
   waiterName?: string;
   createdAt: string; // ISO
   items: TicketItem[];
+  /** Hesap fişinin alt satırları: TOPLAM, İndirim, Ödenen, KALAN. */
+  totals?: { label: string; value: string }[];
   footer?: string;
 }
 
@@ -511,6 +516,17 @@ export interface StatusSnapshot {
   bridge?: BridgePairing;
   /** Köprü soketi ayakta mı. Yazıcı bağlantısından bağımsız bir sorudur. */
   bridgeConnected: boolean;
+  /** İnternet kesilince yerel merkez (yalnızca bu bilgisayar merkez seçildiyse `role: 'hub'`). */
+  offline?: {
+    role: 'hub' | 'none';
+    mode: 'online' | 'offline' | 'draining';
+    pending: number;
+    rejected: number;
+    snapshotAt: string | null;
+    listening: boolean;
+    addresses: string[];
+    unprintable: number;
+  };
 }
 
 /** WS wire protocol, agent <-> gateway. */
@@ -524,7 +540,9 @@ export interface StatusSnapshot {
 export type ServerMessage =
   | { type: 'job'; payload: PrintJob }
   | { type: 'revoked'; reason?: string }
-  | { type: 'pong' };
+  | { type: 'pong' }
+  /** Çevrimdışı merkez: şubede adisyon değişti, anlık görüntüyü tazele (veri taşımaz). */
+  | { type: 'offline.dirty' };
 
 export type ClientMessage =
   | { type: 'job.ack'; payload: JobAck }

@@ -8,6 +8,7 @@ const TR_TITLE: Record<TicketModel['kind'], string> = {
   ORDER: 'SİPARİŞ',
   REPRINT: 'TEKRAR BASKI',
   CANCELLATION: '*** İPTAL ***',
+  BILL: 'HESAP',
 };
 
 const STATION_TITLE = { BAR: 'BAR', KITCHEN: 'MUTFAK', CASHIER: 'KASA' } as const;
@@ -135,12 +136,19 @@ export function renderTicket(ticket: TicketModel, printer: PrinterConfig, codepa
   b.rule();
 
   for (const item of ticket.items) {
-    b.style({ bold: true }).columns(`${item.qty} x ${item.name}`, '').style();
+    b.style({ bold: true }).columns(`${item.qty} x ${item.name}`, item.price ?? '').style();
     for (const opt of item.options ?? []) b.wrapped(`+ ${opt}`, 4);
     if (item.note) b.style({ bold: true }).wrapped(`>> ${item.note}`, 4).style();
   }
 
   b.rule();
+  if (ticket.totals?.length) {
+    ticket.totals.forEach((row, index) => {
+      const last = index === (ticket.totals?.length ?? 0) - 1;
+      b.style(last ? { bold: true, doubleHeight: true } : {}).columns(row.label, row.value).style();
+    });
+    b.rule();
+  }
   if (ticket.footer) b.align('center').wrapped(ticket.footer);
   b.feed(printer.cut ? 3 : 5);
   if (printer.cut) b.cut();
