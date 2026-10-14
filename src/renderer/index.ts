@@ -101,6 +101,16 @@ interface StatusSnapshot {
   lastSale?: OkcSaleResult & { at: string };
   bridge?: BridgePairing;
   bridgeConnected: boolean;
+  offline?: {
+    role: 'hub' | 'none';
+    mode: 'online' | 'offline' | 'draining';
+    pending: number;
+    rejected: number;
+    snapshotAt: string | null;
+    listening: boolean;
+    addresses: string[];
+    unprintable: number;
+  };
 }
 
 interface UsbPrinterHint {
@@ -324,6 +334,7 @@ function render(s: StatusSnapshot): void {
 
   renderMetrics(s);
   renderStatusPanel(s);
+  renderOffline(s);
   renderPairings(s);
   renderStations(s);
   renderOkc(s);
@@ -1495,3 +1506,22 @@ void (async () => {
 
   await bridge.probe();
 })();
+
+/** İnternet kesilince — yalnızca bu bilgisayar merkezse görünür. */
+function renderOffline(s: StatusSnapshot): void {
+  const card = document.getElementById('offlineCard');
+  if (!card) return;
+  const hub = s.offline;
+  card.classList.toggle('hidden', !hub || hub.role !== 'hub');
+  if (!hub || hub.role !== 'hub') return;
+  const mode = { online: 'İnternet var — beklemede', offline: 'İNTERNET YOK — siparişler burada', draining: 'Buluta aktarılıyor…' }[hub.mode];
+  const set = (id: string, text: string) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  set('offlineMode', hub.listening ? mode : `${mode} (ağ ucu kapalı)`);
+  set('offlinePending', String(hub.pending));
+  set('offlineRejected', hub.rejected > 0 ? `${hub.rejected} — Yönetim'e bildirildi` : '0');
+  set('offlineSnapshot', hub.snapshotAt ? timeOf(hub.snapshotAt) : 'Henüz yok');
+  set('offlineAddress', hub.addresses.length ? hub.addresses.map((ip) => `${ip}:47821`).join(', ') : 'Ağ yok');
+}

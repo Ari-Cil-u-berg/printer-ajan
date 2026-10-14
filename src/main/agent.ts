@@ -22,6 +22,8 @@ import { log } from './logger';
 import { deviceInfo, heartbeat, pair } from './pairing';
 import { BridgeLink, pairBridge } from './bridge/bridge-link';
 import { OkcManager } from './okc/okc';
+import { OfflineHub } from './offline/hub';
+import type { HubCipher } from './offline/hub-store';
 import { PrintEngine } from './print/engine';
 import { JobQueue } from './queue';
 
@@ -44,6 +46,8 @@ export class Agent extends EventEmitter {
   private lastSale: StatusSnapshot['lastSale'];
   readonly okc: OkcManager;
   private bridge: BridgeLink | null = null;
+  /** İnternet kesilince yerel merkez (docs/CEVRIMDISI-CALISMA.md). */
+  private offlineHub: OfflineHub | null = null;
 
   constructor(private readonly appVersion: string) {
     super();
@@ -67,7 +71,8 @@ export class Agent extends EventEmitter {
       // job — the backend only accepts it from that device. A job from before
       // pairings (no route) belonged to the single migrated pairing.
       const route = job?.route ?? this.config.get().pairings.find((p) => p.legacyStationMap)?.deviceId;
-      if (route) this.connections.get(route)?.ack(ack);
+      // Merkezin kendi bastığı çevrimdışı fişin bulutta karşılığı yok: onay gitmez.
+      if (route && !ack.jobId.startsWith('offline:')) this.connections.get(route)?.ack(ack);
       this.emitStatus();
     });
     this.queue.on('changed', () => this.emitStatus());
@@ -91,12 +96,40 @@ export class Agent extends EventEmitter {
     this.okc.start();
     this.connectAll();
     this.startHeartbeat();
+    void this.offlineHub?.start();
     void this.connectBridge();
     this.probeTimer = setInterval(() => void this.refreshPrinterHealth(), PROBE_INTERVAL_MS);
     void this.refreshPrinterHealth();
   }
 
+  /**
+   * Yerel merkezi aç. `index.ts` çağırır — POS kökeni ve işletim sistemi
+   * şifrelemesi Electron tarafında. Merkez olup olmadığına bulut karar verir;
+   * seçilmemişse ağ ucu açık durur ama her isteğe "merkez değil" der.
+   */
+  enableOfflineHub(input: { posOrigin: () => Promise<string | null>; cipher: HubCipher }): void {
+    if (this.offlineHub) return;
+    this.offlineHub = new OfflineHub({
+      apiBaseUrl: () => this.config.get().apiBaseUrl,
+      pairings: () =>
+        this.config.get().pairings.map((pairing) => ({
+          deviceId: pairing.deviceId,
+          stations: pairing.stations,
+          printable: Boolean(pairing.local) || Boolean(pairing.legacyStationMap),
+        })),
+      token: (deviceId) => this.config.getToken(deviceId),
+      enqueue: (job) => {
+        this.queue.enqueue(job);
+      },
+      posOrigin: input.posOrigin,
+      dataDir: this.config.dataDir(),
+      cipher: input.cipher,
+    });
+    this.offlineHub.on('changed', () => this.emitStatus());
+  }
+
   stop(): void {
+    void this.offlineHub?.stop();
     this.queue.stop();
     this.okc.stop();
     this.bridge?.stop();
@@ -135,8 +168,10 @@ export class Agent extends EventEmitter {
     });
     conn.on('state', (state: ConnectionState) => {
       this.connectionStates.set(pairing.deviceId, state);
+      this.reportCloud();
       this.emitStatus();
     });
+    conn.on('offline.dirty', () => this.offlineHub?.nudge());
     conn.on('job', (job: PrintJob) => {
       // Stamped here, never trusted from the wire: this decides the printer.
       const routed: PrintJob = { ...job, route: pairing.deviceId };
@@ -180,6 +215,18 @@ export class Agent extends EventEmitter {
       return { printer: pairing.local, label: pairing.printerName };
     }
     return { printer: cfg.printers[job.station], label: `${job.station} istasyonu` };
+  }
+
+  /**
+   * Bulut soketlerinin durumu yerel merkeze: biri bağlıysa bulut ayakta;
+   * hepsi kopmuşsa (bağlanmaya çalışmıyor, kopuk) kesinti olabilir — merkez
+   * 10 saniye bekleyip kendi de doğrular.
+   */
+  private reportCloud(): void {
+    if (!this.offlineHub) return;
+    const states = [...this.connectionStates.values()];
+    if (states.some((state) => state === 'CONNECTED')) this.offlineHub.setCloudConnected(true);
+    else if (states.length > 0 && states.every((state) => state === 'OFFLINE')) this.offlineHub.setCloudConnected(false);
   }
 
   /** Aggregate for the header: connected only when EVERY printer is. */
@@ -461,6 +508,7 @@ export class Agent extends EventEmitter {
       lastSale: this.lastSale,
       bridge: cfg.bridge,
       bridgeConnected: this.bridge?.isConnected() ?? false,
+      ...(this.offlineHub ? { offline: this.offlineHub.status() } : {}),
     };
   }
 
