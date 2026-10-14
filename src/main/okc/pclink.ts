@@ -211,34 +211,6 @@ export class PcLinkClient {
     );
   }
 
-  /**
-   * `POST /v1/documents/{id}/payments/EFT_POS` — PARÇALI ÖDEME EKLE.
-   *
-   * TEK FİŞ, ÇOK ÖDEME: masa hesabı bölüşerek öderken her kart AYRI bir
-   * istekle açık belgeye eklenir; cihaz her biri için kart ekranını açar.
-   * Belge, bütün ödemeler alındıktan sonra `Belge Sonlandır` ile kapanır ve
-   * o gövde tahsil edilmiş ödemeleri "teknik mutabakat amacıyla" yeniden
-   * listeler (Hugin PC Link Postman dokümanı, "Parçalı Ödeme Nasıl Yapılır").
-   *
-   * Bütçe satışla aynı: cihaz kartın okutulmasını bekliyor. Zaman aşımı yine
-   * BELİRSİZLİKTİR — kart çekilmiş olabilir.
-   */
-  addCardPayment(
-    documentId: string,
-    amount: string,
-    signal?: AbortSignal,
-  ): Promise<
-    PcLinkResponse<{ transactionId?: number | string; amount?: string; authorizationCode?: string }>
-  > {
-    return this.request(
-      'POST',
-      `/v1/documents/${encodeURIComponent(documentId)}/payments/EFT_POS`,
-      { amount },
-      DEFAULT_TIMEOUT_MS,
-      signal,
-    );
-  }
-
   /** `POST /v1/documents/{id}/cancel` — açık belgeyi iptal eder. */
   cancelDocument(documentId: string): Promise<PcLinkResponse> {
     return this.request('POST', `/v1/documents/${encodeURIComponent(documentId)}/cancel`, {});
