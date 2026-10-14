@@ -1,6 +1,6 @@
-Türkçe harfleri düzgün basmayan fiş yazıcıları (ör. Sunlux, Xprinter) için iki yeni seçenek. Yazıcı ayarındaki "Türkçe karakterler" listesinde:
+Kablolu Hugin yazarkasada hesabı tek fişte bölüşme: masa hesabı birden çok kart ya da nakitle ödenirken her ödeme aynı fişe eklenir, fiş son ödemede bütün ürünlerle kesilir.
 
-- **D1 / D2 / D3 — Çince mod kapalı:** Çince modda açılan yazıcılarda Türkçe harfleri yazı olarak basar. Hızlıdır.
-- **E — Görüntü olarak:** Fişi resim olarak basar. Türkçe harfler her yazıcıda doğru çıkar, baskı biraz daha yavaştır.
+- Bu sırada yazarkasa başka masaya fiş kesmez; ajanın Yazarkasa panelinde "Bölüşülen fiş açık" yazar.
+- Kart alındıktan sonra fiş iptal edilemez, kalan alınarak tamamlanır.
 
-"Test yazdır" fişinde artık A'dan E'ye bütün satırlar var: harfleri doğru çıkan satırı seçin, önce A–D'yi deneyin. Mevcut ayarlarınız değişmedi; yazıcılarınız eskisi gibi basmaya devam eder.
+Diğer yazarkasa ve yazıcı ayarlarınız değişmedi.
