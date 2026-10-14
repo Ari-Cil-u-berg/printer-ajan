@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { io, type Socket } from 'socket.io-client';
-import type { BridgePairing, OkcSaleResult } from '../../shared/types';
+import type { BridgePairing, OkcSaleResult, OkcSplitRequest } from '../../shared/types';
 import { log } from '../logger';
 
 /**
@@ -51,7 +51,14 @@ interface SalePayload {
   reference: string;
   /** Kafenin vergi kimliği — cihaza `X-SoftwareId` olarak gider. */
   taxId?: string;
-  fiscal?: { format: string; document: Record<string, unknown> };
+  fiscal?: {
+    format: string;
+    document?: Record<string, unknown>;
+    /** `HUGIN_PCLINK_SPLIT_V1`: açık fişin sahibi (adisyon). */
+    key?: string;
+    /** `HUGIN_PCLINK_SPLIT_V1`: bu parçanın ödemesi. */
+    payment?: { type?: string; amount?: string };
+  };
 }
 
 interface QueryPayload {
@@ -79,6 +86,8 @@ export interface BridgeLinkOptions {
     document: Record<string, unknown>;
     taxId?: string;
   }) => Promise<OkcSaleResult>;
+  /** Parçalı fişin bir parçası — `OkcManager.sellSplit`. Yalnızca kablolu Hugin. */
+  sellSplit: (input: OkcSplitRequest) => Promise<OkcSaleResult>;
   /** "Bu satış ne oldu?" — yalnızca BİZİM işlemimiz için cevap verir. */
   lookup: (saleId: string) => OkcSaleResult | null;
   /** Cihaz şu an ulaşılabilir mi — heartbeat'e yazılır. */
@@ -246,6 +255,18 @@ export class BridgeLink extends EventEmitter {
    * kurtarmaya düşüyor.
    */
   private async onSale(payload: SalePayload): Promise<void> {
+    const split = splitRequestOf(payload);
+    if (split) {
+      this.emitAck(payload.intentId, true);
+      this.emitResult(await this.opts.sellSplit(split));
+      return;
+    }
+    if (payload.fiscal?.format === SPLIT_FORMAT) {
+      // Biçimi tanıyoruz ama gövde eksik/bozuk: tahmin yok.
+      this.emitAck(payload.intentId, false, 'Parçalı fiş emri eksik');
+      return;
+    }
+
     const document = payload.fiscal?.document;
 
     if (!document || payload.fiscal?.format !== 'HUGIN_PCLINK_V1') {
@@ -339,10 +360,12 @@ export class BridgeLink extends EventEmitter {
       return;
     }
 
+    // Parçalı fişin ara parçasında fiş numarası yok; banka referansı gider.
+    const providerRef = result.receiptNo ?? result.transactionRef;
     this.socket?.emit(ClientEvents.RESULT, {
       intentId: result.saleId,
       status: result.status,
-      ...(result.receiptNo ? { providerRef: result.receiptNo } : {}),
+      ...(providerRef ? { providerRef } : {}),
       ...(result.error ? { failureReason: result.error } : {}),
       ...(result.code ? { slip: { code: result.code } } : {}),
       ...this.fiscalOf(result),
@@ -530,4 +553,29 @@ async function reason(res: Response): Promise<string> {
     // Gövde yok ya da JSON değil.
   }
   return `HTTP ${res.status}`;
+}
+
+/** Tek fiş, çok ödeme — kablolu Hugin'in parçalı fiş emri. */
+const SPLIT_FORMAT = 'HUGIN_PCLINK_SPLIT_V1';
+
+/**
+ * Parçalı fiş emrini okur; biçim değilse ya da alanlar eksikse `null`.
+ *
+ * Tutar `"12.50"` biçiminde olmak zorunda — cihaza giden ödeme bu metin ve
+ * okunamayan bir tutarı "yaklaşık" göndermek yanlış tutarla kart çekmek olurdu.
+ */
+function splitRequestOf(payload: SalePayload): OkcSplitRequest | null {
+  const fiscal = payload.fiscal;
+  if (fiscal?.format !== SPLIT_FORMAT) return null;
+  const type = fiscal.payment?.type;
+  const amount = fiscal.payment?.amount;
+  if (!fiscal.key || (type !== 'CARD' && type !== 'CASH')) return null;
+  if (typeof amount !== 'string' || !/^\d{1,9}\.\d{2}$/.test(amount) || Number(amount) <= 0) return null;
+  return {
+    saleId: payload.intentId,
+    key: fiscal.key,
+    payment: { type, amount },
+    ...(fiscal.document ? { document: fiscal.document } : {}),
+    ...(payload.taxId ? { taxId: payload.taxId } : {}),
+  };
 }
