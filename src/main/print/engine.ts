@@ -3,6 +3,7 @@ import { log } from '../logger';
 import { EscPosBuilder, renderTicket } from './escpos';
 import { calibrationBlock, serverStyleTestSlip, serverTicketBytes } from './server-escpos';
 import { printOverNetwork, probeNetworkPrinter } from './network-driver';
+import { NotRetryablePrintError } from './print-errors';
 import { printViaSpooler, probeSpoolerPrinter } from './spooler-driver';
 
 export class PrinterNotConfiguredError extends Error {
@@ -43,7 +44,14 @@ export class PrintEngine {
     const bytes = this.renderJob(job, printer);
     const copies = Math.max(1, Math.min(job.copies || 1, 5));
     for (let i = 0; i < copies; i++) {
-      await this.send(printer, bytes);
+      try {
+        await this.send(printer, bytes);
+      } catch (err) {
+        // A retry repeats the whole job — the copies already on paper too.
+        if (i === 0) throw err;
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new NotRetryablePrintError(`${i}/${copies} kopya basıldı, kalanı basılamadı: ${reason}`);
+      }
     }
     log.info('printed', { jobId: job.jobId, station: job.station, route: job.route, copies, bytes: bytes.length });
   }
