@@ -1,9 +1,10 @@
 /**
- * TCP:9100 delivery, phase by phase — and why only the first phase may retry.
+ * TCP:9100 delivery.
  *
  * Hatay Sofrası, 20.10.2026: a network printer in "E) Görüntü" mode printed
  * each ticket and closed its connection late. The agent called that a failure,
- * retried, and the kitchen got the same ticket again and again.
+ * retried, and the kitchen got the same ticket again and again. That one case
+ * changed; every other outcome must stay exactly as it was (see the last tests).
  */
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -16,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const FAST = { connectTimeoutMs: 500, writeTimeoutMs: 300, closeWaitMs: 300 };
+const FAST = { connectTimeoutMs: 500, writeTimeoutMs: 300 };
 
 /** A printer that reads everything; `onData` decides what it does after. */
 async function printer({ onSocket = () => {}, allowHalfOpen = false } = {}) {
@@ -52,14 +53,27 @@ test('a printer that never closes after taking the ticket: delivered, not an err
   await p.stop();
 });
 
-test('a printer that resets after taking the ticket: delivered', async () => {
-  const p = await printer({
-    allowHalfOpen: true,
-    onSocket: (socket) => socket.on('end', () => socket.resetAndDestroy()),
-  });
+test('a printer that closes normally: delivered, as always', async () => {
+  const p = await printer();
   await printOverNetwork('127.0.0.1', p.port, ticket, FAST);
   assert.deepEqual(p.received[0], ticket);
   await p.stop();
+});
+
+test('a reset connection is still an error the queue retries (unchanged)', async () => {
+  // Accepts, then resets without reading — the ticket may not be on paper.
+  const p = await printer({ onSocket: (socket) => socket.resetAndDestroy() });
+  try {
+    const err = await printOverNetwork('127.0.0.1', p.port, ticket, FAST).then(
+      () => null,
+      (e) => e,
+    );
+    assert.ok(err instanceof Error);
+    assert.match(err.message, /Yazıcıya bağlanılamadı/);
+    assert.equal(isRetryable(err), true);
+  } finally {
+    await p.stop();
+  }
 });
 
 test('nobody listening: fails, and the queue may retry (nothing reached paper)', async () => {
@@ -74,7 +88,7 @@ test('nobody listening: fails, and the queue may retry (nothing reached paper)',
   assert.equal(isRetryable(err), true);
 });
 
-test('a printer that stops reading mid-ticket: fails WITHOUT a retry (part may be on paper)', async () => {
+test('a printer that stops reading mid-ticket: still an error the queue retries (unchanged)', async () => {
   const p = await printer({ onSocket: (socket) => socket.pause() });
   // Far more than the kernel buffers hold, so the write cannot complete.
   const huge = Buffer.alloc(64 * 1024 * 1024, 0x41);
@@ -83,7 +97,8 @@ test('a printer that stops reading mid-ticket: fails WITHOUT a retry (part may b
     (e) => e,
   );
   assert.ok(err instanceof Error);
-  assert.equal(isRetryable(err), false);
+  assert.match(err.message, /Yazıcı yanıt vermiyor/);
+  assert.equal(isRetryable(err), true);
   await p.stop();
 });
 
