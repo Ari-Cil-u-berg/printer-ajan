@@ -64,6 +64,15 @@ class Canvas {
     }
   }
 
+  /** White dots on an inked background — `GS B`'s glyphs. */
+  clear(x: number, y: number, w: number, h: number): void {
+    for (let yy = Math.max(0, y); yy < Math.min(this.height, y + h); yy++) {
+      for (let xx = Math.max(0, x); xx < Math.min(this.width, x + w); xx++) {
+        this.bits[yy * this.stride + (xx >> 3)]! &= ~(0x80 >> (xx & 7));
+      }
+    }
+  }
+
   /** `GS v 0` of the inked part, or null for a line with no dots at all. */
   toRaster(): Buffer | null {
     let last = -1;
@@ -97,14 +106,17 @@ class Glyphs {
     [...font.chars].forEach((ch, i) => this.index.set(ch, i));
   }
 
-  draw(canvas: Canvas, ch: string, x: number, y: number, wMul: number, hMul: number): void {
+  /** `ink` false draws the glyph in white — on an inverted (`GS B`) cell. */
+  draw(canvas: Canvas, ch: string, x: number, y: number, wMul: number, hMul: number, ink = true): void {
     const i = this.index.get(ch) ?? this.index.get('?');
     if (i === undefined) return;
     const base = i * this.rowBytes * this.font.height;
     for (let gy = 0; gy < this.font.height; gy++) {
       for (let gx = 0; gx < this.font.width; gx++) {
         const byte = this.data[base + gy * this.rowBytes + (gx >> 3)]!;
-        if (byte & (0x80 >> (gx & 7))) canvas.fill(x + gx * wMul, y + gy * hMul, wMul, hMul);
+        if (!(byte & (0x80 >> (gx & 7)))) continue;
+        if (ink) canvas.fill(x + gx * wMul, y + gy * hMul, wMul, hMul);
+        else canvas.clear(x + gx * wMul, y + gy * hMul, wMul, hMul);
       }
     }
   }
@@ -121,11 +133,13 @@ interface Style {
   fontB: boolean;
   bold: boolean;
   underline: boolean;
+  /** `GS B 1`: white on black — the Modern style's total, a kitchen's highlighted note. */
+  invert: boolean;
   wMul: number;
   hMul: number;
 }
 
-const DEFAULT_STYLE: Style = { fontB: false, bold: false, underline: false, wMul: 1, hMul: 1 };
+const DEFAULT_STYLE: Style = { fontB: false, bold: false, underline: false, invert: false, wMul: 1, hMul: 1 };
 
 function glyphsFor(style: Style): Glyphs {
   if (style.fontB) return style.bold ? GLYPHS.B_BOLD : GLYPHS.B;
@@ -179,7 +193,9 @@ class LineRenderer {
     for (const { ch, style } of this.cells) {
       const g = glyphsFor(style);
       const top = glyphH - g.cellH * style.hMul;
-      g.draw(canvas, ch, x, top, style.wMul, style.hMul);
+      // The printer inverts the whole character cell, the glyph comes out white.
+      if (style.invert) canvas.fill(x, top, g.cellW * style.wMul, g.cellH * style.hMul);
+      g.draw(canvas, ch, x, top, style.wMul, style.hMul, !style.invert);
       if (style.underline) canvas.fill(x, glyphH - style.hMul, g.cellW * style.wMul, style.hMul);
       x += g.cellW * style.wMul;
     }
@@ -242,10 +258,18 @@ export function rasterizeServerTokens(tokens: readonly ServerToken[], paper: num
           hMul: n & 0x10 ? 2 : 1,
           wMul: n & 0x20 ? 2 : 1,
           underline: (n & 0x80) !== 0,
+          // ESC ! does not touch GS B.
+          invert: style.invert,
         };
         break;
       case (GS << 8) | 0x21: // GS ! n
         style = { ...style, wMul: ((n >> 4) & 7) + 1, hMul: (n & 7) + 1 };
+        break;
+      case (ESC << 8) | 0x2d: // ESC - n — 1/2 (or '1'/'2') on, 0 off
+        style = { ...style, underline: n === 1 || n === 2 || n === 49 || n === 50 };
+        break;
+      case (GS << 8) | 0x42: // GS B n
+        style = { ...style, invert: (n & 1) === 1 };
         break;
       default:
         // ESC d (feed), ESC p (drawer), GS V (cut), GS v 0 (logo): the printer's job.
