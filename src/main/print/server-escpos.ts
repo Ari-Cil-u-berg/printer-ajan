@@ -55,6 +55,11 @@ const FIXED_ARGS = new Map<number, number>([
   [(ESC << 8) | 0x21, 1], // ESC ! n print mode
   [(ESC << 8) | 0x70, 3], // ESC p m t1 t2 drawer
   [(GS << 8) | 0x21, 1], // GS ! n  size
+  // Fiş tasarımı (backend, 19.10.2026). Unknown, they made the whole ticket
+  // "unrecognised" and it went out untranslated — wrong letters on exactly the
+  // printers that had picked a Türkçe setting.
+  [(ESC << 8) | 0x2d, 1], // ESC - n  underline (Zarif)
+  [(GS << 8) | 0x42, 1], // GS B n   white on black (Modern, highlighted notes)
 ]);
 
 /**

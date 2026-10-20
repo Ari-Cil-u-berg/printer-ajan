@@ -5,6 +5,7 @@ import { STATIONS } from '../shared/types';
 import type { JobAck, PrintJob, Station } from '../shared/types';
 import { atomicWrite } from './fsutil';
 import { log } from './logger';
+import { isRetryable } from './print/print-errors';
 
 interface QueueEntry {
   job: PrintJob;
@@ -170,7 +171,9 @@ export class JobQueue extends EventEmitter {
           log.warn('print failed', { jobId: head.job.jobId, attempts: head.attempts, error });
           this.emit('failure', head.job, error);
 
-          if (head.attempts >= MAX_ATTEMPTS) {
+          // Bytes may already be on paper (see `NotRetryablePrintError`):
+          // another attempt is another copy, so it fails now, once.
+          if (head.attempts >= MAX_ATTEMPTS || !isRetryable(err)) {
             this.remove(head.job.jobId);
             this.state.done.push({ jobId: head.job.jobId, at: Date.now() });
             this.persist();

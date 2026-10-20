@@ -1,6 +1,6 @@
-Kablolu Hugin yazarkasada hesabı tek fişte bölüşme: masa hesabı birden çok kart ya da nakitle ödenirken her ödeme aynı fişe eklenir, fiş son ödemede bütün ürünlerle kesilir.
+Aynı fişin tekrar tekrar basılması düzeltildi.
 
-- Bu sırada yazarkasa başka masaya fiş kesmez; ajanın Yazarkasa panelinde "Bölüşülen fiş açık" yazar.
-- Kart alındıktan sonra fiş iptal edilemez, kalan alınarak tamamlanır.
+- Ağ yazıcısı fişi yavaş bastığında (özellikle "E) Görüntü" ayarında) ajan bekleyemeyip aynı fişi yeniden gönderiyordu. Artık yazıcının fişi bitirmesini bekler; fiş bir kez basılır.
+- Fiş tasarımındaki Modern ve Zarif stiller ile mutfakta vurgulu not, Türkçe karakter ayarı seçili yazıcılarda da doğru harflerle basılır.
 
-Diğer yazarkasa ve yazıcı ayarlarınız değişmedi.
+Yazıcı ve yazarkasa ayarlarınız değişmedi.

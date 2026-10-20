@@ -1,7 +1,7 @@
 {
   "name": "ari-adisyon-ajan",
   "productName": "Ari Adisyon Yazıcı Ajanı",
-  "version": "0.3.31",
+  "version": "0.3.32",
   "description": "Ari Adisyon agent — connects local thermal printers and Hugin fiscal devices to the cloud POS.",
   "main": "dist/main/index.js",
   "author": {
@@ -21,7 +21,7 @@
     "mock": "node scripts/mock-server.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run build",
-    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --test --test-timeout=60000 \"tests/**/*.test.mjs\"",
     "pack": "npm run build:prod && electron-builder --dir",
     "pack:staging": "npm run build:staging && electron-builder --dir",
     "dist:mac": "npm run build:prod && electron-builder --mac",
