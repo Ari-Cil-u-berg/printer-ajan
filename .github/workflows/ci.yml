@@ -7,7 +7,15 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Windows too: release.sh runs the same tests on windows-latest before it
+    # publishes, and a test that only hangs there stalled v0.3.32's release for
+    # 38 minutes with nothing in the log (20.10.2026).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
