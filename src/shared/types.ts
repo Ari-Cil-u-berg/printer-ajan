@@ -62,8 +62,10 @@ export const CODEPAGE_ENCODING: Record<string, string> = {
  *
  * The number is what differs between printers, not the table: the POS-80s in
  * the field have WPC1254 at 91 and PC857 somewhere broken, the Xprinter
- * XP-Q90C has no 91 at all and prints PC857 at 13. No number works everywhere,
- * so the café picks the row that came out right on the test slip.
+ * XP-Q90C has no 91 at all and prints PC857 at 13, and the Xprinter/Sunlux
+ * printers with firmware 7.001CROG have no WPC1254 at all — their only Turkish
+ * table is PC857 at 61. No number works everywhere, so the café picks the row
+ * that came out right on the test slip.
  */
 export interface TextTable {
   n: number;
@@ -95,6 +97,8 @@ export const SERVER_TEXT_TABLE: TextTable = { n: 91, encoding: 'win1254' };
 export const TEXT_TABLES: Record<string, TextTable> = {
   PC857_13: { n: 13, encoding: 'cp857' },
   WPC1254_48: { n: 48, encoding: 'win1254' },
+  // F, not E: E is RASTER below. Same letter as the POS's own setting.
+  PC857_61: { n: 61, encoding: 'cp857' },
   ASCII: { n: 0, encoding: 'ascii' },
   // D1–D3: the same three tables with Chinese mode switched off first.
   FS_WPC1254_91: { n: 91, encoding: 'win1254', cancelKanji: true },

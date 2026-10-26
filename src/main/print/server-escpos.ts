@@ -193,7 +193,8 @@ const CALIBRATION: ReadonlyArray<[string, string, TextTable]> = [
   ['A', 'Varsayilan (WPC1254 91)', SERVER_TEXT_TABLE],
   ['B', 'PC857 13', TEXT_TABLES.PC857_13!],
   ['C', 'WPC1254 48', TEXT_TABLES.WPC1254_48!],
-  // After A–C: `FS .` stays in effect until the closing `ESC @`.
+  ['F', 'PC857 61', TEXT_TABLES.PC857_61!],
+  // After A–C and F: `FS .` stays in effect until the closing `ESC @`.
   ['D1', 'Cince kapali + 1254 91', TEXT_TABLES.FS_WPC1254_91!],
   ['D2', 'Cince kapali + PC857 13', TEXT_TABLES.FS_PC857_13!],
   ['D3', 'Cince kapali + 1254 48', TEXT_TABLES.FS_WPC1254_48!],
@@ -243,7 +244,10 @@ export function calibrationBlock(width: number, cut: boolean): Buffer {
   parts.push(rasterTextLines([`E) Goruntu: ${PROOF}`], paperDots(width)));
   parts.push(
     Buffer.from([ESC, 0x40]),
-    Buffer.from('Ajanda "Turkce karakterler" ayarini\no satira gore secin. A-D daha hizli,\nE her yazicida calisir.\n', 'latin1'),
+    Buffer.from(
+      'Dogru satirin harfini POS > Donanim >\nyazici "Turkce karakter"de secin, ajanda\nVarsayilan kalsin. E (goruntu) yalniz\najanda var; POS\'ta A seciliyken calisir.\n',
+      'latin1',
+    ),
     Buffer.from([ESC, 0x64, cut ? 3 : 5]),
   );
   if (cut) parts.push(Buffer.from([GS, 0x56, 66, 0x00]));
