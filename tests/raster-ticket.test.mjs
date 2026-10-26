@@ -54,7 +54,7 @@ function walk(out) {
 }
 
 test('settings: D1–D3 and E are accepted, anything else is not', () => {
-  for (const key of ['FS_WPC1254_91', 'FS_PC857_13', 'FS_WPC1254_48', 'RASTER', 'PC857_13', 'ASCII']) {
+  for (const key of ['FS_WPC1254_91', 'FS_PC857_13', 'FS_WPC1254_48', 'RASTER', 'PC857_13', 'PC857_61', 'ASCII']) {
     assert.ok(isTextTableSetting(key), key);
   }
   for (const key of ['BOGUS', '', 'raster', '__proto__', 'toString', 42, undefined]) assert.ok(!isTextTableSetting(key), String(key));
@@ -143,4 +143,42 @@ test('test slip: starts from ESC @, shows D1–D3 with FS . and E as an image', 
   assert.ok(block.includes(Buffer.from([0x1d, 0x76, 0x30, 0x00])), 'E image');
   const text = block.toString('latin1');
   for (const label of ['A) ', 'B) ', 'C) ', 'D1) ', 'D2) ', 'D3) ']) assert.ok(text.includes(label), label);
+});
+
+/**
+ * F (PC857 at 61) — the Xprinter/Sunlux printers with firmware 7.001CROG have
+ * no WPC1254 and nothing at 13 or 48; Turkish is only at 61. Their Chinese mode
+ * is off, so the F row must print before any `FS .`, like A–C: a printer on D
+ * would otherwise show F right on this slip and wrong on every ticket.
+ */
+test('test slip: F prints on table 61 in CP857, before Chinese mode is switched off', () => {
+  const block = calibrationBlock(42, true);
+  const f = block.indexOf(Buffer.from('F) ', 'latin1'));
+  assert.ok(f > 0, 'F row');
+  assert.deepEqual([...block.subarray(f - 3, f)], [0x1b, 0x74, 61]);
+  assert.ok(iconv.decode(block.subarray(f, block.indexOf(0x0a, f)), 'cp857').includes('çğıöşü ÇĞİÖŞÜ'));
+  assert.ok(f < block.indexOf(Buffer.from('D1) ', 'latin1')), 'F before D1');
+  assert.ok(!block.subarray(0, f).includes(Buffer.from([0x1c, 0x2e])), 'no FS . before F');
+});
+
+test('F: server ticket re-encoded to CP857 on table 61, no FS .', () => {
+  const p = { ...printer, textTable: 'PC857_61' };
+  const out = serverTicketBytes(bytes('kitchen'), p, legacy);
+  assert.deepEqual([...out.subarray(0, 5)], [0x1b, 0x40, 0x1b, 0x74, 61]);
+  assert.ok(!out.includes(Buffer.from([0x1b, 0x74, 91])), 'no 91 left');
+  assert.ok(!out.includes(Buffer.from([0x1c, 0x2e])), 'no FS .');
+  assert.ok(iconv.decode(out, 'cp857').includes('Çiğ Köfte Dürüm'));
+});
+
+/**
+ * One place decides. A ticket the POS already rendered for its own table (not
+ * `ESC t 91`) goes out as the POS sent it, whatever this setting is — so a café
+ * that picked F in the POS needs nothing here.
+ */
+test('a ticket the POS rendered for table 61 prints as sent, whatever the agent setting', () => {
+  const fromPos = Buffer.concat([Buffer.from([0x1b, 0x40, 0x1b, 0x74, 61]), iconv.encode('Çiğ Köfte\n', 'cp857')]);
+  for (const textTable of [undefined, 'SERVER', 'PC857_13', 'PC857_61', 'FS_PC857_13', 'RASTER', 'ASCII']) {
+    const out = serverTicketBytes(fromPos, { ...printer, textTable }, legacy);
+    assert.deepEqual(out, Buffer.concat([legacy, fromPos]), String(textTable));
+  }
 });
