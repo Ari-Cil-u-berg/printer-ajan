@@ -247,6 +247,7 @@ const TEXT_TABLE_OPTIONS: ReadonlyArray<[string, string]> = [
   ['SERVER', 'A) Varsayılan — WPC1254 · 91'],
   ['PC857_13', 'B) PC857 · 13'],
   ['WPC1254_48', 'C) WPC1254 · 48'],
+  ['PC857_61', 'F) PC857 · 61 — Xprinter, Sunlux'],
   ['FS_WPC1254_91', 'D1) Çince mod kapalı + WPC1254 · 91'],
   ['FS_PC857_13', 'D2) Çince mod kapalı + PC857 · 13'],
   ['FS_WPC1254_48', 'D3) Çince mod kapalı + WPC1254 · 48'],
@@ -944,6 +945,13 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
   for (const [value, text] of TEXT_TABLE_OPTIONS) tableSelect.append(new Option(text, value));
   tableSelect.value = TEXT_TABLE_OPTIONS.some(([v]) => v === printer?.textTable) ? printer!.textTable! : 'SERVER';
   grid.append(label('Türkçe karakterler'), tableSelect);
+  // The POS's per-printer setting (Yönetim → Donanım) is the one that reaches
+  // the ticket; this one only rewrites a ticket the POS left on A.
+  const tableHint = document.createElement('p');
+  tableHint.className = 'help';
+  tableHint.textContent =
+    'Türkçe ayarını POS\'ta Yönetim → Donanım → yazıcı ekranında seçin, burayı "A) Varsayılan" bırakın. ' +
+    'Buradaki ayar yalnız POS\'ta A seçiliyken uygulanır; E (görüntü) yalnız burada var.';
 
   const widthSelect = document.createElement('select');
   for (const [v, l] of [['42', '80 mm (42 karakter)'], ['32', '58 mm (32 karakter)'], ['48', '80 mm (48 karakter)']]) {
@@ -962,6 +970,7 @@ function printerCard(o: PrinterCardOptions): HTMLElement {
   grid.append(label('Kesici'), cutWrap);
 
   card.appendChild(grid);
+  card.appendChild(tableHint);
   card.appendChild(spoolHint);
 
   const applyTypeVisibility = (): void => {

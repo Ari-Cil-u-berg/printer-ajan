@@ -180,10 +180,26 @@ Addresses are restricted to private ranges, and the device's self-signed certifi
 
 ## Turkish characters
 
-Thermal printers need the right code page. Default is **CP857** (`ESC t 13`); the UI
-also offers ISO-8859-9 (`ESC t 47`), CP1254, CP850, CP437 — per printer. The test print
-includes `ç ğ ı i ö ş ü Ç Ğ I İ Ö Ş Ü` so the café verifies during setup. If a glyph is
-unmappable, text folds to an ASCII lookalike rather than printing `?`.
+**One place decides: the POS** (Yönetim → Donanım → printer → Türkçe karakter,
+backend `Printer.textTable`). The server renders each ticket for that printer's
+table; the agent's own "Türkçe karakterler" setting stays on "A) Varsayılan".
+
+| POS setting | Agent setting | What prints |
+|---|---|---|
+| anything but A (e.g. F · PC857 · 61) | anything | the POS's table, as sent — the agent does not touch it |
+| A Varsayılan (`ESC t 91`) | B, C, D1–D3, F or E | the agent re-encodes the ticket for its own setting |
+
+The agent only rewrites a stream that says `ESC t 91` (`tokenizeServerEscpos`);
+anything else prints as sent, pinned by `tests/raster-ticket.test.mjs`. So the
+agent setting matters only for **E (image)**, which exists only here and only
+works while the POS is on A. A new table goes into the backend first and into
+`TEXT_TABLES` here under the same letter.
+
+The `ESC t` number is what differs between printers, not the table. Known so far:
+POS-80 (Zjiang type) WPC1254 at 91 — A; Epson PC857 at 13 — B; Xprinter/Sunlux
+with firmware 7.001CROG have no WPC1254 at all and PC857 only at 61 — F. A
+printer's self-test (power on holding FEED) lists its tables with numbers; the
+test slip prints every row so the café picks the one that came out right.
 
 ## Packaging
 

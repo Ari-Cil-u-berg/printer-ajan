@@ -71,7 +71,7 @@ test('test slip is built like a server ticket and lists every table to compare',
   const slip = serverStyleTestSlip('BAR', 'PC857 · 13');
   assert.deepEqual([...slip.subarray(0, 5)], [0x1b, 0x40, 0x1b, 0x74, 91]);
   const block = calibrationBlock(42, true).toString('latin1');
-  for (const row of ['A) Varsayilan (WPC1254 91)', 'B) PC857 13', 'C) WPC1254 48']) assert.ok(block.includes(row), row);
+  for (const row of ['A) Varsayilan (WPC1254 91)', 'B) PC857 13', 'C) WPC1254 48', 'F) PC857 61']) assert.ok(block.includes(row), row);
   assert.ok(calibrationBlock(42, true).includes(Buffer.from([0x1d, 0x56, 66])));
 });
 
