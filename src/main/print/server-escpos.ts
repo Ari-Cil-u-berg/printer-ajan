@@ -2,6 +2,7 @@ import iconv from 'iconv-lite';
 import { RASTER_TABLE, SERVER_TABLE, SERVER_TEXT_TABLE, TEXT_TABLES, type PrinterConfig, type TextTable } from '../../shared/types';
 import { paperDots, rasterizeServerTokens, rasterTextLines } from './raster-ticket';
 
+const BEL = 0x07;
 const ESC = 0x1b;
 const FS = 0x1c;
 const GS = 0x1d;
@@ -60,13 +61,22 @@ const FIXED_ARGS = new Map<number, number>([
   // printers that had picked a Türkçe setting.
   [(ESC << 8) | 0x2d, 1], // ESC - n  underline (Zarif)
   [(GS << 8) | 0x42, 1], // GS B n   white on black (Modern, highlighted notes)
+  // "Fiş çıkınca öt" (backend `beepBytes`, 30.10.2026): right after `ESC @` +
+  // `ESC t 91` on kitchen tickets. Unknown, they too sent the ticket out
+  // untranslated. This one, `ESC ( A` and `BEL` (in the tokenizer) are passed
+  // on, never interpreted.
+  [(ESC << 8) | 0x42, 2], // ESC B n t  buzzer (Xprinter-style clones)
 ]);
+
+/** `ESC ( A pL pH …` — Epson's buzzer (fn 48 carries 4 bytes). More than this is not a beep. */
+const BUZZER_MAX_PARAMS = 64;
 
 /**
  * One piece of a server-rendered ticket. `text` is printable Windows-1254 bytes
  * and LF; `table` is the server's `ESC t 91`; `cmd` is any other command it is
  * known to emit, with its arguments (`op` = prefix << 8 | opcode) — the logo's
- * `GS v 0` included, pixels and all.
+ * `GS v 0` included, pixels and all. `BEL` (0x07, a one-byte buzzer command)
+ * is a `cmd` with `op` = 0x07.
  */
 export type ServerToken =
   | { kind: 'text'; bytes: Buffer }
@@ -93,6 +103,13 @@ export function tokenizeServerEscpos(src: Buffer): ServerToken[] | null {
     const b = src[i]!;
     if (b === LF || (b >= 0x20 && b !== 0x7f)) {
       if (textStart < 0) textStart = i;
+      i += 1;
+      continue;
+    }
+    if (b === BEL) {
+      // The one control byte besides LF the server sends: a buzzer, not text.
+      flush(i);
+      tokens.push({ kind: 'cmd', op: BEL, raw: src.subarray(i, i + 1) });
       i += 1;
       continue;
     }
@@ -129,6 +146,15 @@ export function tokenizeServerEscpos(src: Buffer): ServerToken[] | null {
       const len = 8 + width * height;
       if (i + len > src.length) return null;
       cmd(len);
+      continue;
+    }
+    if (b === ESC && op === 0x28 && src[i + 2] === 0x41) {
+      // ESC ( A pL pH d1…dk — the Epson buzzer, k = pL + pH·256. Its
+      // parameters are skipped whole: one of them may well read as ESC.
+      if (i + 5 > src.length) return null;
+      const k = src[i + 3]! | (src[i + 4]! << 8);
+      if (k < 1 || k > BUZZER_MAX_PARAMS || i + 5 + k > src.length) return null;
+      cmd(5 + k);
       continue;
     }
     const args = FIXED_ARGS.get((b << 8) | op);
