@@ -1,7 +1,6 @@
-Xprinter ve Sunlux yazıcılarda Türkçe harfler artık doğru basılabiliyor.
+Mutfak fişinde yazıcı ötünce de Türkçe harfler doğru basılıyor.
 
-- "Türkçe karakterler" listesine yeni F) PC857 · 61 seçeneği geldi (Xprinter, Sunlux). Bu yazıcıların Türkçe tablosu yalnız 61 numarada; önceki seçeneklerin hiçbiri tutmuyordu.
-- Türkçe ayarını POS'ta Yönetim → Donanım → yazıcı ekranında yapın; ajanda "A) Varsayılan" kalsın. Ajandaki ayar yalnız POS'ta A seçiliyken uygulanır; E (görüntü) yalnız ajanda var.
-- Test fişinde artık F satırı da var.
+- POS'ta yazıcı için "Fiş çıkınca öt" seçildiğinde mutfak fişi Türkçe ayarınızla (B, C, D, F) ya da görüntü olarak (E) doğru basılır, yazıcı da öter.
+- "Fiş çıkınca öt" ayarı POS'ta Yönetim → Donanım → yazıcı ekranındadır. Bu sürümden eski ajanlarda yazıcı ötmez, fiş her zamanki gibi basılır.
 
 Yazıcı ve yazarkasa ayarlarınız değişmedi.
