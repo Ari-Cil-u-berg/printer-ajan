@@ -195,6 +195,20 @@ agent setting matters only for **E (image)**, which exists only here and only
 works while the POS is on A. A new table goes into the backend first and into
 `TEXT_TABLES` here under the same letter.
 
+The same goes for commands: a stream with one the tokenizer does not know is
+"unrecognised" and prints as sent — wrong letters under every agent setting
+but A. Known today: `ESC @`, `ESC t 91`, `ESC a` / `E` / `M` / `d` / `!` / `-`,
+`ESC p` (drawer), `GS !`, `GS B`, `GS V` (cut), `GS v 0` (logo), and the
+kitchen buzzer the POS's "Fiş çıkınca öt" puts right after `ESC t 91`:
+`ESC ( A` (Epson; at most 64 parameter bytes, more prints as sent), `ESC B n t`
+and `BEL` (0x07; the only control byte besides LF that is not refused). The
+buzzer commands are never interpreted: under B, C, D1–D3 and F they pass
+through, under E they reach the printer between the images, each in its place
+and once
+(`tests/beep-escpos.test.mjs`). A command the backend's builder starts
+emitting needs a line in `FIXED_ARGS` (or its own case) first, with real
+builder output added to `tests/fixtures/`.
+
 The `ESC t` number is what differs between printers, not the table. Known so far:
 POS-80 (Zjiang type) WPC1254 at 91 — A; Epson PC857 at 13 — B; Xprinter/Sunlux
 with firmware 7.001CROG have no WPC1254 at all and PC857 only at 61 — F. A

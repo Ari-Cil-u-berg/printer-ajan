@@ -214,7 +214,8 @@ class LineRenderer {
  * Style commands are consumed here — they shaped the drawing — and never sent:
  * `ESC a` in particular would move the images on printers that apply it to
  * rasters. What the printer still has to do itself passes through untouched:
- * `ESC @`, feeds, the drawer kick, the cut, and the logo (already an image).
+ * `ESC @`, feeds, the drawer kick, the cut, the buzzer (`ESC ( A`, `ESC B`,
+ * `BEL`), and the logo (already an image).
  *
  * Null when the images would pass `MAX_RASTER_BYTES`.
  */
@@ -272,7 +273,7 @@ export function rasterizeServerTokens(tokens: readonly ServerToken[], paper: num
         style = { ...style, invert: (n & 1) === 1 };
         break;
       default:
-        // ESC d (feed), ESC p (drawer), GS V (cut), GS v 0 (logo): the printer's job.
+        // ESC d (feed), ESC p (drawer), GS V (cut), GS v 0 (logo), the buzzer: the printer's job.
         lines.flush();
         lines.push(token.raw);
     }
