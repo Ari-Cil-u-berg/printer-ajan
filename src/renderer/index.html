@@ -246,22 +246,39 @@
           <section class="panel" data-panel="okc">
             <section class="card">
               <h2>Yazarkasa (ÖKC)</h2>
-              <p class="help">
+              <p class="help pclink-only">
                 Kablolu Hugin yazarkasa. Cihazın <b>aynı ağda</b> ve PC Link'in açık olması
                 gerekir. Adres cihazın ayarlar ekranında yazar.
               </p>
+              <!--
+                T300 Hugin'in GMP-3 kütüphanesiyle konuşuyor (native/hugin-fpu).
+                Kütüphane yalnız Windows için var; Mac'te seçilirse durum
+                satırı bunu söylüyor.
+              -->
+              <p class="help gmp3-only hidden">
+                Hugin T300. Cihaz <b>ethernet kablosuyla</b> aynı ağa bağlı olmalı; IP adresi
+                cihazın ağ ayarlarında yazar. <b>Sicil no</b> zorunlu (cihazın etiketinde).
+                İlk bağlantıda bu bilgisayar cihazla eşleşir. Yalnız Windows'ta çalışır.
+              </p>
               <dl class="kv">
+                <dt>Cihaz</dt>
+                <dd>
+                  <select id="okcProtocol">
+                    <option value="pclink">Hugin S1 — PC Link</option>
+                    <option value="gmp3">Hugin T300 — GMP-3 (kablolu)</option>
+                  </select>
+                </dd>
                 <dt>IP adresi</dt>
                 <dd><input id="okcHost" type="text" placeholder="192.168.1.50" autocomplete="off" /></dd>
                 <dt>Port</dt>
                 <dd><input id="okcPort" type="number" value="4443" /></dd>
                 <dt>Ad</dt>
                 <dd><input id="okcLabel" type="text" placeholder="Kasa yazarkasası" autocomplete="off" /></dd>
-                <dt>VKN (yazılım kimliği)</dt>
-                <dd><input id="okcSoftwareId" type="text" placeholder="6310077423 — işletme kaydından gelir" inputmode="numeric" autocomplete="off" /></dd>
+                <dt class="pclink-only">VKN (yazılım kimliği)</dt>
+                <dd class="pclink-only"><input id="okcSoftwareId" type="text" placeholder="6310077423 — işletme kaydından gelir" inputmode="numeric" autocomplete="off" /></dd>
                 <dt>Sicil no</dt>
                 <dd><input id="okcSerialNo" type="text" placeholder="FU00031401 — boşsa cihazdan okunur" autocomplete="off" /></dd>
-                <dt>Cihaz kimliği</dt>
+                <dt class="pclink-only">Cihaz kimliği</dt>
                 <!--
                   KUTUNUN İÇİNDEKİ DÜĞME, ayrı bir satır değil.
 
@@ -271,12 +288,12 @@
                   kurulumcuya `ipconfig /all` çıktısından okutmanın hiçbir
                   gerekçesi yok — makinede zaten duruyor, düğme getiriyor.
                 -->
-                <dd class="with-action">
+                <dd class="with-action pclink-only">
                   <input id="okcHardwareId" type="text" placeholder="MAC adresi ya da cihaz etiketindeki Remark" autocomplete="off" />
                   <button id="okcMacBtn" type="button" class="in-input" title="Bu bilgisayarın MAC adresini getir">MAC getir</button>
                 </dd>
               </dl>
-              <p class="help">
+              <p class="help pclink-only">
                 <b>"eşleşmiyor" hatası alıyorsanız</b> önce kutudaki <code>MAC getir</code>
                 düğmesini deneyin; olmazsa <code>Kimliği keşfet</code>'e basın: ajan MAC
                 adresleri dahil bütün adayları cihaza tek tek deneyip kabul edileni bulur.
@@ -284,11 +301,11 @@
                 (ör. <code>S1P-F225-033-50</code>) ve — <b>VKN değiştiyse</b> — cihazda hâlâ
                 kayıtlı olabilecek <b>eski VKN</b>.
               </p>
-              <dl class="kv">
+              <dl class="kv pclink-only">
                 <dt>Ek aday (yalnızca keşif için)</dt>
                 <dd><input id="okcLegacyTaxId" type="text" placeholder="cihaz etiketindeki Remark ya da eski VKN" autocomplete="off" /></dd>
               </dl>
-              <p class="help">
+              <p class="help pclink-only">
                 <b>VKN</b> — yazarkasanın mükellef kaydındaki vergi numarası. Cihaz bu numarayı
                 <code>X-SoftwareId</code> <b>ve</b> <code>X-HardwareId</code> başlıklarının
                 ikisinde de bekliyor; başka bir değer gelirse "eşleşmiyor" diyerek tüm istekleri
@@ -309,7 +326,7 @@
               <div class="row">
                 <button id="okcSaveBtn" class="primary">Kaydet ve bağlan</button>
                 <button id="okcTestBtn" class="ghost">Bağlantıyı sına</button>
-                <button id="okcDiscoverBtn" class="ghost">Kimliği keşfet</button>
+                <button id="okcDiscoverBtn" class="ghost pclink-only">Kimliği keşfet</button>
                 <!--
                   TANILAMA: keşif hiçbir aday bulamadığında kalan tek soru.
                   Keşif bir DEĞER arıyor; bu, cihazın hangi BAŞLIĞI hangi uçta
@@ -331,10 +348,15 @@
                   <button id="okcDiagHideBtn" type="button" class="ghost small">Kapat</button>
                 </div>
                 <pre id="okcDiagText"></pre>
-                <p class="help">
+                <p class="help pclink-only">
                   Hiçbir satır <code>200</code> dönmüyorsa eksik olan bir değer değil,
                   <b>cihazdaki PC Link aktivasyonu</b> olabilir (<code>ERR_PCLINK_INACTIVE</code>).
                   Bu çıktıyı olduğu gibi Hugin destek ekibine iletebilirsiniz.
+                </p>
+                <p class="help gmp3-only hidden">
+                  <b>Kısım / KDV</b> satırı fişin vergisinin dayanağı: her ürünün KDV oranı için
+                  cihazda o oranlı bir kısım tanımlı olmalı. Eşleme reddediliyorsa sicil
+                  numarasını kontrol edin. Bu çıktıyı Hugin destek ekibine iletebilirsiniz.
                 </p>
               </div>
             </section>
@@ -370,7 +392,7 @@
               <dl class="kv">
                 <dt>Bağlantı</dt><dd id="okcState">—</dd>
                 <dt>Açık belge</dt><dd id="okcDoc">—</dd>
-                <dt>Sertifika</dt><dd id="okcCert" class="mono">—</dd>
+                <dt class="pclink-only">Sertifika</dt><dd id="okcCert" class="mono pclink-only">—</dd>
                 <dt>Son denetim</dt><dd id="okcChecked">—</dd>
               </dl>
             </section>

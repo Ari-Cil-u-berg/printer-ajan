@@ -27,6 +27,8 @@ interface PrinterConfig {
  * eksik kalan bir alan, formda doldurulup sessizce kaybolur.
  */
 interface OkcConfig {
+  /** Yoksa `pclink` (S1). `gmp3` = T300. */
+  protocol?: 'pclink' | 'gmp3';
   host: string;
   port: number;
   fingerprint?: string;
@@ -434,6 +436,37 @@ function saleLine(sale: OkcSaleResult & { at: string }): string {
 
 // --- yazarkasa -------------------------------------------------------------
 
+const OKC_DEFAULT_PORT = { pclink: 4443, gmp3: 4444 } as const;
+
+/**
+ * Seçim kaydedilene kadar formun malı. Durum her yenilendiğinde kayıtlı
+ * değeri geri yazmak, kurulumcunun T300'ü seçip IP'yi yazarken seçimin S1'e
+ * dönmesi demekti.
+ */
+let okcProtocolDirty = false;
+
+function okcProtocol(): 'pclink' | 'gmp3' {
+  return $<HTMLSelectElement>('okcProtocol').value === 'gmp3' ? 'gmp3' : 'pclink';
+}
+
+/** Yalnız seçili dile ait alanlar görünür; PC Link'in kimlik kutuları T300'de yok. */
+function applyOkcProtocol(protocol: 'pclink' | 'gmp3'): void {
+  document.querySelectorAll('.pclink-only').forEach((el) => el.classList.toggle('hidden', protocol !== 'pclink'));
+  document.querySelectorAll('.gmp3-only').forEach((el) => el.classList.toggle('hidden', protocol !== 'gmp3'));
+  $<HTMLInputElement>('okcSerialNo').placeholder =
+    protocol === 'gmp3' ? 'FT40012345 — zorunlu, cihazın etiketinde' : 'FU00031401 — boşsa cihazdan okunur';
+}
+
+$('okcProtocol').addEventListener('change', () => {
+  okcProtocolDirty = true;
+  const protocol = okcProtocol();
+  // Varsayılan port da dile göre: elle değiştirilmiş bir porta dokunulmaz.
+  const portInput = $<HTMLInputElement>('okcPort');
+  const other = protocol === 'gmp3' ? OKC_DEFAULT_PORT.pclink : OKC_DEFAULT_PORT.gmp3;
+  if (!portInput.value || Number(portInput.value) === other) portInput.value = String(OKC_DEFAULT_PORT[protocol]);
+  applyOkcProtocol(protocol);
+});
+
 function renderOkc(s: StatusSnapshot): void {
   const hostInput = $<HTMLInputElement>('okcHost');
   const portInput = $<HTMLInputElement>('okcPort');
@@ -442,10 +475,16 @@ function renderOkc(s: StatusSnapshot): void {
   const serialInput = $<HTMLInputElement>('okcSerialNo');
   const hardwareInput = $<HTMLInputElement>('okcHardwareId');
 
+  if (!okcProtocolDirty) $<HTMLSelectElement>('okcProtocol').value = s.okc?.protocol ?? 'pclink';
+  const protocol = okcProtocol();
+  applyOkcProtocol(protocol);
+
   // Yazarken üstüne yazma — kullanıcı IP girerken durum yenilenirse alan
   // sıfırlanmamalı.
   if (document.activeElement !== hostInput) hostInput.value = s.okc?.host ?? '';
-  if (document.activeElement !== portInput) portInput.value = String(s.okc?.port ?? 4443);
+  if (document.activeElement !== portInput && !okcProtocolDirty) {
+    portInput.value = String(s.okc?.port ?? OKC_DEFAULT_PORT[protocol]);
+  }
   if (document.activeElement !== labelInput) labelInput.value = s.okc?.label ?? '';
   if (document.activeElement !== softwareInput) softwareInput.value = s.okc?.softwareId ?? '';
   // Cihazdan okunmuş sicil de burada görünür: kurulumcu markanın verdiği
@@ -512,17 +551,27 @@ $('okcSaveBtn').addEventListener('click', async () => {
   btn.disabled = true;
   setMsg(msg, 'Bağlanılıyor…');
 
-  const res = await bridge.setOkc({
+  const protocol = okcProtocol();
+  const common = {
+    protocol,
     host: $<HTMLInputElement>('okcHost').value.trim(),
-    port: Number($<HTMLInputElement>('okcPort').value) || 4443,
+    port: Number($<HTMLInputElement>('okcPort').value) || OKC_DEFAULT_PORT[protocol],
     label: $<HTMLInputElement>('okcLabel').value.trim(),
-    softwareId: $<HTMLInputElement>('okcSoftwareId').value.trim(),
     serialNo: $<HTMLInputElement>('okcSerialNo').value.trim(),
-    hardwareId: $<HTMLInputElement>('okcHardwareId').value.trim(),
-  });
+  };
+  const res = await bridge.setOkc(
+    protocol === 'gmp3'
+      ? common
+      : {
+          ...common,
+          softwareId: $<HTMLInputElement>('okcSoftwareId').value.trim(),
+          hardwareId: $<HTMLInputElement>('okcHardwareId').value.trim(),
+        },
+  );
   btn.disabled = false;
 
   if (!res.ok) return setMsg(msg, res.error, 'bad');
+  okcProtocolDirty = false;
   const h = res.data.okcHealth;
   setMsg(
     msg,
@@ -708,6 +757,7 @@ $('okcTestBtn').addEventListener('click', async () => {
 
 $('okcClearBtn').addEventListener('click', async () => {
   const res = await bridge.setOkc(null);
+  if (res.ok) okcProtocolDirty = false;
   setMsg($('okcMsg'), res.ok ? 'Yazarkasa kaldırıldı.' : res.error, res.ok ? 'ok' : 'bad');
 });
 

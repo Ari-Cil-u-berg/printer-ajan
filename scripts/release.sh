@@ -209,6 +209,11 @@ mkdir -p release
 
 npm run build:prod --silent
 
+# Hugin T300 (GMP-3) yardımcı programı — yalnız Windows paketine girer.
+# Sertifika (HUGIN_CERTS_DIR) yoksa T300'süz paketlenir ve uyarı basar;
+# T300 taşıması gereken yayında HUGIN_FPU=required ile çalıştırın.
+if [[ $BUILD_WIN -eq 1 ]]; then node scripts/build-hugin-fpu.mjs; fi
+
 BUILDER_ARGS=()
 if [[ $BUILD_MAC -eq 1 ]]; then BUILDER_ARGS+=(--mac); fi
 if [[ $BUILD_WIN -eq 1 ]]; then BUILDER_ARGS+=(--win); fi

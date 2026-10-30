@@ -13,3 +13,9 @@ release/
 .env.*.local
 
 docs/
+# Hugin GMP-3 helper: SDK DLLs are downloaded (pinned + SHA-256), certificates come
+# from HUGIN_CERTS_DIR — neither is committed. See scripts/build-hugin-fpu.mjs.
+native/hugin-fpu/vendor/
+native/hugin-fpu/bin/
+native/hugin-fpu/obj/
+native/hugin-fpu/out/

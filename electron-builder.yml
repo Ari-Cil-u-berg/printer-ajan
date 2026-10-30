@@ -29,6 +29,14 @@ win:
     - target: nsis
       arch: [x64]
   icon: build/icon.png # electron-builder derives the .ico
+  # Hugin T300 (GMP-3) helper, built by scripts/build-hugin-fpu.mjs. Lands in
+  # resources/hugin-fpu, outside the asar: it is a separate .exe and Hugin's
+  # library opens Certificates/ relative to it. An empty folder (no
+  # certificates at build time) ships a build without T300 support.
+  extraResources:
+    - from: native/hugin-fpu/out
+      to: hugin-fpu
+      filter: ["**/*"]
 
   # UNSIGNED, deliberately and temporarily.
   #
