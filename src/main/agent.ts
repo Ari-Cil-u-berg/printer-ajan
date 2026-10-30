@@ -21,7 +21,7 @@ import { envConfig } from './env';
 import { log } from './logger';
 import { deviceInfo, heartbeat, pair } from './pairing';
 import { BridgeLink, pairBridge } from './bridge/bridge-link';
-import { OkcManager } from './okc/okc';
+import { createFiscalDevice, protocolOf, type FiscalDevice } from './okc/device';
 import { OfflineHub } from './offline/hub';
 import type { HubCipher } from './offline/hub-store';
 import { PrintEngine } from './print/engine';
@@ -44,7 +44,8 @@ export class Agent extends EventEmitter {
   private lastJob: StatusSnapshot['lastJob'];
   private printerHealth: StatusSnapshot['printerHealth'] = {};
   private lastSale: StatusSnapshot['lastSale'];
-  readonly okc: OkcManager;
+  /** S1 (PC Link) ya da T300 (GMP-3) — ayardaki `protocol` seçer, bkz. `setOkc`. */
+  private device: FiscalDevice;
   private bridge: BridgeLink | null = null;
   /** İnternet kesilince yerel merkez (docs/CEVRIMDISI-CALISMA.md). */
   private offlineHub: OfflineHub | null = null;
@@ -54,10 +55,7 @@ export class Agent extends EventEmitter {
     this.config = new ConfigStore();
     this.engine = new PrintEngine((job) => this.printerFor(job));
     this.queue = new JobQueue(this.config.dataDir(), (job) => this.engine.print(job));
-    this.okc = new OkcManager(this.config.dataDir(), this.config.get().okc, (okc) =>
-      this.config.update({ okc }),
-    );
-    this.okc.on('changed', () => this.emitStatus());
+    this.device = this.createDevice(this.config.get().okc);
 
     this.queue.on('ack', (ack, job: PrintJob | undefined) => {
       this.lastJob = {
@@ -86,6 +84,19 @@ export class Agent extends EventEmitter {
       };
       this.emitStatus();
     });
+  }
+
+  /** Köprü ve IPC her seferinde buradan okur: protokol değişince cihaz da değişir. */
+  get okc(): FiscalDevice {
+    return this.device;
+  }
+
+  private createDevice(okc: OkcConfig | undefined): FiscalDevice {
+    const device = createFiscalDevice(this.config.dataDir(), okc, (next) =>
+      this.config.update({ okc: next }),
+    );
+    device.on('changed', () => this.emitStatus());
+    return device;
   }
 
   // --- lifecycle ----------------------------------------------------------
@@ -410,8 +421,19 @@ export class Agent extends EventEmitter {
   }
 
   setOkc(okc: OkcConfig | undefined): void {
+    const previous = this.device.getConfig();
     this.config.update({ okc });
-    this.okc.setConfig(okc);
+    if (okc && protocolOf(okc) !== protocolOf(previous)) {
+      // S1 ↔ T300: başka dil, başka yönetici. Eskisinin zamanlayıcısı ve
+      // yardımcı programı durdurulur; bekleyen kayıtları kendi dosyalarında
+      // kalır ve aynı protokole dönülürse yeniden görünür.
+      this.device.stop();
+      this.device.removeAllListeners();
+      this.device = this.createDevice(okc);
+      this.device.start();
+    } else {
+      this.device.setConfig(okc);
+    }
     this.emitStatus();
   }
 

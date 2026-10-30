@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Hugin GMP-3 (FPU) yardımcı programı — ajanın T300 ile konuştuğu tek yer.
+
+    Hugin protokolü kapalı .NET kütüphanelerinde tutuyor ve Node/Electron için
+    kütüphane yok. Ajan bu programı başlatır, stdin/stdout üzerinden satır
+    başına bir JSON konuşur. Para yolunun bütün kararları ajanda (TypeScript,
+    testli); burası yalnızca izin verilen kütüphane çağrılarını yapar.
+
+    x86 + .NET Framework: Hugin'in örnek uygulaması böyle derlenip sahada
+    sınanmış (FP300Service.csproj → PlatformTarget x86, v4.0). Kütüphaneler
+    AnyCPU ama System.Data.SQLite'ın yerel parçası bit genişliğine bağlı;
+    üreticinin denediği yapılandırmadan ayrılmak için bir sebebimiz yok.
+    net462: Electron 33'ün desteklediği her Windows 10/11'de hazır geliyor.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net462</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <AssemblyName>AriHuginFpu</AssemblyName>
+    <RootNamespace>AriHuginFpu</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Version>1.0.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Mac/Linux'ta da derlenebilsin: .NET Framework başvuru derlemeleri NuGet'ten. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
+    Hugin SDK — depoya GİRMEZ. `scripts/build-hugin-fpu.mjs` sabit bir
+    commit'ten indirip SHA-256 ile doğrular ve `vendor/`'a koyar.
+  -->
+  <ItemGroup>
+    <Reference Include="Hugin.Common"><HintPath>vendor\Hugin.Common.dll</HintPath></Reference>
+    <Reference Include="Hugin.ExDevice.DiffieHellman"><HintPath>vendor\Hugin.ExDevice.DiffieHellman.dll</HintPath></Reference>
+    <Reference Include="Hugin.GMPCommon"><HintPath>vendor\Hugin.GMPCommon.dll</HintPath></Reference>
+    <Reference Include="Hugin.POS.CompactPrinter.FP300"><HintPath>vendor\Hugin.POS.CompactPrinter.FP300.dll</HintPath></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>vendor\Newtonsoft.Json.dll</HintPath></Reference>
+    <Reference Include="System.Data.SQLite"><HintPath>vendor\System.Data.SQLite.dll</HintPath></Reference>
+    <Reference Include="System.Management" />
+  </ItemGroup>
+
+</Project>

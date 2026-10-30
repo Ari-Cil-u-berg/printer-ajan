@@ -322,7 +322,18 @@ export interface BridgePairing {
  * Yazıcılar istasyona göre çoğalır (bar, mutfak, kasa) ama mali belge kesen
  * cihaz tek bir mükellefe ait tek bir kayıt cihazıdır.
  */
+/**
+ * Kablolu Hugin'in iki dili. Alan yoksa `pclink` — bu alan eklenmeden önce
+ * kaydedilmiş bütün ayarlar S1 / PC Link kurulumudur.
+ *
+ *  - `pclink`: S1, cihazda HTTPS (4443), Node'dan doğrudan.
+ *  - `gmp3`:   T300, Hugin'in GMP-3 kütüphanesi (4444), yalnız Windows'ta,
+ *              `native/hugin-fpu` yardımcı programı üzerinden.
+ */
+export type OkcProtocol = 'pclink' | 'gmp3';
+
 export interface OkcConfig {
+  protocol?: OkcProtocol;
   /** Yalnızca özel ağ aralığı — bkz. `pclink.ts` `isPrivateHost`. */
   host: string;
   port: number;
@@ -377,6 +388,9 @@ export interface OkcConfig {
    * Cihazın sicil numarası, `X-SerialNo` başlığında gider.
    *
    * `GET /v1/settings` döndürüyor; bilinmiyorsa başlık hiç gönderilmiyor.
+   *
+   * GMP-3'te ZORUNLU: kütüphane eşlemeden önce sicili istiyor
+   * (`FiscalRegisterNo`) ve cihaza sormanın yolu eşlemeden geçiyor.
    */
   serialNo?: string;
 }

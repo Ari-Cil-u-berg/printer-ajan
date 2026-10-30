@@ -6,6 +6,8 @@ import { envConfig } from './env';
 import { log } from './logger';
 import { localMacAddresses } from './okc/okc';
 import { isPrivateHost, PCLINK_DEFAULT_PORT } from './okc/pclink';
+import { GMP3_DEFAULT_PORT, GMP3_SERIAL_PATTERN } from './okc/gmp3-protocol';
+import { protocolOf } from './okc/device';
 import { listPrinters, listUnqueuedUsbPrinters, scanNetworkPrinters } from './print/printer-registry';
 import { checkForUpdatesNow, installUpdateNow, updateStatus } from './updater';
 import {
@@ -98,10 +100,27 @@ function assertOkc(value: unknown): OkcConfig {
   if (!host) throw new Error('Yazarkasa adresi girin');
   if (!isPrivateHost(host)) throw new Error('Adres yerel ağda olmalı (ör. 192.168.1.50)');
 
+  const label = typeof c.label === 'string' ? c.label.trim().slice(0, 60) : '';
+
+  /**
+   * T300 (GMP-3): IP + port + SİCİL. PC Link'in kimlik başlıkları (VKN,
+   * donanım kimliği, parmak izi) bu dilde yok — saklanmıyor ki sonra yanlış
+   * yola sızmasın. Adres yalnızca IPv4: yardımcı program ad çözümlemiyor.
+   */
+  if (c.protocol === 'gmp3') {
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) throw new Error('T300 için IP adresi girin (ör. 192.168.1.50)');
+    const gmp3Port = c.port ?? GMP3_DEFAULT_PORT;
+    if (!Number.isInteger(gmp3Port) || gmp3Port < 1 || gmp3Port > 65535) throw new Error('Geçersiz port');
+    const serialNo = typeof c.serialNo === 'string' ? c.serialNo.replace(/\s/g, '').toUpperCase() : '';
+    if (!GMP3_SERIAL_PATTERN.test(serialNo)) {
+      throw new Error('T300 için sicil numarası gerekli (cihazın etiketinde, 6–12 harf/rakam)');
+    }
+    return { protocol: 'gmp3', host, port: gmp3Port, ...(label ? { label } : {}), serialNo };
+  }
+
   const port = c.port ?? PCLINK_DEFAULT_PORT;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Geçersiz port');
 
-  const label = typeof c.label === 'string' ? c.label.trim().slice(0, 60) : '';
   const text = (value: unknown): string =>
     typeof value === 'string' ? value.trim().slice(0, 64) : '';
   /**
@@ -223,7 +242,9 @@ export function registerIpc(
       // kullanıcı ayar ekranını her açtığında sabitlemeyi sıfırlamak, korumayı
       // hiç yapmamakla aynı şey olurdu.
       const current = agent.okc.getConfig();
-      if (next && current && current.host === next.host) {
+      // Aynı protokol şartı: S1'in parmak izi ve donanım kimliği T300 ayarına
+      // taşınmasın (aynı IP'yle cihaz değiştirmek mümkün).
+      if (next && current && current.host === next.host && protocolOf(current) === protocolOf(next)) {
         if (current.fingerprint) next.fingerprint = current.fingerprint;
         // FORMDA BOŞ BIRAKILDIYSA öğrenilen sicil korunur. Kullanıcı bir
         // numara yazdıysa onunki kazanır: cihazdan okunan değer yanlışsa
