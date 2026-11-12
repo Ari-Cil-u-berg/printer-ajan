@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { externalAssetPath } from '../assets';
+import { NotRetryablePrintError } from './print-errors';
 
 const run = promisify(execFile);
 const EXEC_TIMEOUT_MS = 20000;
@@ -53,8 +54,27 @@ async function printWindows(printerName: string, file: string): Promise<void> {
     );
     if (!stdout.includes('OK')) throw new Error(stdout.trim() || 'bilinmeyen hata');
   } catch (err) {
-    throw new Error(`Yazdırma kuyruğu hatası (${printerName}): ${message(err)}`);
+    throw windowsSpoolerError(printerName, err);
   }
+}
+
+/**
+ * `raw-print.ps1` writes `WRITTEN` once the whole ticket is in the Windows
+ * queue. A failure after that — EndDoc, or our 20 s timeout killing a script
+ * the driver kept waiting — leaves the ticket in the queue, where it still
+ * prints; a retry was a second copy. So it fails once, visibly, like the
+ * network path (`network-driver.ts`). Before `WRITTEN` nothing is queued and
+ * the job retries as before.
+ */
+export function windowsSpoolerError(printerName: string, err: unknown): Error {
+  const stdout = err && typeof err === 'object' ? String((err as { stdout?: unknown }).stdout ?? '') : '';
+  if (stdout.includes('WRITTEN')) {
+    return new NotRetryablePrintError(
+      `Fiş Windows yazdırma kuyruğuna verildi ama tamamlandığı doğrulanamadı (${printerName}): ${message(err)}. ` +
+        'Kâğıda çıkmadıysa kasadan yeniden basın.',
+    );
+  }
+  return new Error(`Yazdırma kuyruğu hatası (${printerName}): ${message(err)}`);
 }
 
 /** Names of printers installed in the OS, for the station dropdowns. */

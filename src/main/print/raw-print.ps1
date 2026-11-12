@@ -73,6 +73,11 @@ public static class RawPrinter
             if (written != bytes.Length)
                 throw new Exception("Short write: " + written + " of " + bytes.Length);
 
+            // Bütün fiş Windows kuyruğunda: bundan sonraki bir hata (ya da
+            // ajanın zaman aşımı) yeniden denenirse ikinci kopya çıkar.
+            Console.Out.WriteLine("WRITTEN");
+            Console.Out.Flush();
+
             EndPagePrinter(hPrinter);
             EndDocPrinter(hPrinter);
         }

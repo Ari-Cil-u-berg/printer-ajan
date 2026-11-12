@@ -1,5 +1,7 @@
 import net from 'node:net';
 
+import { NotRetryablePrintError } from './print-errors';
+
 export interface NetworkPrintTimings {
   connectTimeoutMs: number;
   /** Idle limit while the bytes are still being written. */
@@ -25,10 +27,17 @@ const TIMINGS: NetworkPrintTimings = {
  * same ticket again and again (Hatay Sofrası, 20.10.2026). So once every byte
  * is written the printer gets `closeWaitMs` to close.
  *
- * A printer that still has not closed by then is an error, exactly as before:
- * "written" only means the operating system took the bytes — on Windows even
- * with the printer not reading at all — so it is no proof of paper, and a
- * retry is what gets a stuck printer's ticket printed once it recovers.
+ * AFTER THE WHOLE TICKET IS WRITTEN, A FAILURE IS NOT RETRIED (12.11.2026).
+ * Zjiang-type printers often print the ticket and then drop the connection
+ * (reset) or never close it. That used to be a retryable error: the queue
+ * sent the whole ticket again after 1, 2, 4, 8… seconds, up to 20 times — the
+ * bill came out once, then again ten seconds later, sometimes many times.
+ * "Written" does not prove paper either way (the OS takes the bytes, on
+ * Windows even from a printer that is not reading), so the job fails ONCE,
+ * visibly, with a message saying so; the kasa reprints it by hand if nothing
+ * came out. A second copy is never sent on its own. A failure BEFORE the
+ * ticket is fully written (cannot connect, refused, write stalls) still
+ * retries — nothing of it can be on paper.
  */
 export function printOverNetwork(
   host: string,
@@ -39,12 +48,22 @@ export function printOverNetwork(
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     let settled = false;
+    /** Every byte handed to the OS: from here on a retry could be a second copy. */
+    let written = false;
 
     const done = (err?: Error) => {
       if (settled) return;
       settled = true;
       socket.destroy();
-      err ? reject(err) : resolve();
+      if (!err) return resolve();
+      reject(
+        written
+          ? new NotRetryablePrintError(
+              `Fiş yazıcıya gönderildi ama yazıcı bağlantıyı düzgün kapatmadı (${host}:${port}): ${err.message}. ` +
+                'Kâğıda çıkmadıysa kasadan yeniden basın.',
+            )
+          : err,
+      );
     };
 
     socket.setTimeout(timings.connectTimeoutMs);
@@ -55,6 +74,7 @@ export function printOverNetwork(
       socket.setTimeout(timings.writeTimeoutMs);
       socket.write(data, (err) => {
         if (err) return done(err);
+        written = true;
         socket.setTimeout(timings.closeWaitMs);
         // end() flushes; 'close' confirms the printer accepted the stream.
         socket.end();

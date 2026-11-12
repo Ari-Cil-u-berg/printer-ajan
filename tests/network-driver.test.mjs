@@ -88,19 +88,72 @@ test('a printer that closes only after it has finished printing (slow, images): 
     },
   ));
 
-test('a printer that never closes: still an error the queue retries (unchanged)', () =>
+/*
+ * 12.11.2026 (Zjiang tipi): the whole ticket written and THEN no clean close —
+ * a reset, or never closing. The ticket is usually on paper; a retry was a
+ * second copy, then a third ten seconds later. It fails once, not retried, and
+ * the message tells the kasa to reprint only if nothing came out.
+ */
+test('a printer that never closes after the whole ticket: fails once, NOT retried', () =>
   withPrinter({ allowHalfOpen: true }, async (p) => {
     const result = await outcome(printOverNetwork('127.0.0.1', p.port, ticket, { ...FAST, closeWaitMs: 500 }));
     assert.equal(result.printed, false);
-    assert.equal(isRetryable(result.err), true);
+    assert.equal(isRetryable(result.err), false);
+    assert.match(result.err.message, /yeniden basın/);
   }));
 
-test('a reset connection: still an error the queue retries (unchanged)', () =>
-  withPrinter({ onSocket: (socket) => socket.resetAndDestroy() }, async (p) => {
-    const result = await outcome(printOverNetwork('127.0.0.1', p.port, ticket, FAST));
-    assert.equal(result.printed, false);
-    assert.equal(isRetryable(result.err), true);
-  }));
+test('a printer that reads the ticket then resets (Zjiang): fails once, NOT retried', () => {
+  const seen = [];
+  return withPrinter(
+    {
+      // Half-open: the printer does not answer our FIN, it resets later.
+      allowHalfOpen: true,
+      onSocket: (socket) => {
+        socket.on('data', (chunk) => {
+          seen.push(chunk);
+          setTimeout(() => socket.resetAndDestroy(), 50);
+        });
+      },
+    },
+    async (p) => {
+      const result = await outcome(printOverNetwork('127.0.0.1', p.port, ticket, FAST));
+      assert.equal(result.printed, false);
+      assert.equal(isRetryable(result.err), false);
+      assert.deepEqual(Buffer.concat(seen), ticket);
+    },
+  );
+});
+
+test('queue + Zjiang-like printer: the ticket goes out ONCE and is acked failed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ari-queue-zj-'));
+  let deliveries = 0;
+  const p = await printer({
+    allowHalfOpen: true,
+    onSocket: (socket) => {
+      socket.once('data', () => {
+        deliveries += 1;
+        setTimeout(() => socket.resetAndDestroy(), 50);
+      });
+    },
+  });
+  const acks = [];
+  const q = new JobQueue(dir, (job) => printOverNetwork('127.0.0.1', p.port, Buffer.from(job.escpos, 'base64'), FAST));
+  q.on('ack', (a) => acks.push(a));
+  q.start();
+  try {
+    q.enqueue({ jobId: 'zj', station: 'CASHIER', copies: 1, escpos: ticket.toString('base64') });
+    const started = Date.now();
+    while (acks.length === 0 && Date.now() - started < 3000) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 2500)); // the old retries came at 1–2 s, then 2–4 s
+    assert.equal(deliveries, 1, 'the bill reached the printer once');
+    assert.equal(acks.length, 1);
+    assert.equal(acks[0].status, 'failed');
+    assert.equal(acks[0].attempts, 1);
+  } finally {
+    q.stop();
+    await p.stop();
+  }
+});
 
 test('nobody listening: still an error the queue retries (unchanged)', async () => {
   const p = await printer();
@@ -111,15 +164,25 @@ test('nobody listening: still an error the queue retries (unchanged)', async () 
   assert.equal(isRetryable(result.err), true);
 });
 
-test('a printer that stops reading: still an error the queue retries (unchanged, Windows too)', () =>
-  // Linux stalls the write; Windows takes all 64 MB into its own buffers and
-  // reports it written. Either way the printer never closes — no paper proof.
+test('a printer that stops reading: an error; retried only while the ticket was not fully written', () =>
+  // Linux/macOS stall the write: nothing complete reached the printer, retry.
+  // Windows takes all 64 MB into its own buffers and reports it written: from
+  // there a retry may be a second copy, so it fails once.
   withPrinter({ onSocket: (socket) => socket.pause() }, async (p) => {
     const huge = Buffer.alloc(64 * 1024 * 1024, 0x41);
     const result = await outcome(printOverNetwork('127.0.0.1', p.port, huge, { ...FAST, closeWaitMs: 500 }));
     assert.equal(result.printed, false);
-    assert.equal(isRetryable(result.err), true);
+    assert.equal(isRetryable(result.err), process.platform !== 'win32');
   }));
+
+test('Windows spooler: a failure after WRITTEN is not retried; before it, it is', async () => {
+  const { windowsSpoolerError } = await import('../dist/main/print/spooler-driver.js');
+  const after = windowsSpoolerError('POS-80', Object.assign(new Error('Command failed: timeout'), { stdout: 'WRITTEN\r\n' }));
+  assert.equal(isRetryable(after), false);
+  assert.match(after.message, /POS-80/);
+  const before = windowsSpoolerError('POS-80', Object.assign(new Error('OpenPrinter failed: 1801'), { stdout: '' }));
+  assert.equal(isRetryable(before), true);
+});
 
 test('engine: a second copy that fails does not reprint the first', async () => {
   // The printer goes away after the first copy: the second cannot connect.
