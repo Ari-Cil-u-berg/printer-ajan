@@ -88,6 +88,8 @@ const TIMINGS = {
   busyRetryMs: 5_000,
   errorRetryMs: 10_000,
   pollMaxMs: 25_000,
+  /** Saat koruması: boştayken de en ileri saati ilerlet (istek gelmese bile). */
+  clockTickMs: 60_000,
 };
 
 const API_PREFIX = '/api/v1';
@@ -103,7 +105,8 @@ const API_PREFIX = '/api/v1';
  * saati yanlışlıkla ileri kalmıştı) sunucu saatine çekilir.
  */
 const CLOCK_ROLLBACK_TOLERANCE_MS = 15 * 60_000;
-const CLOCK_FLOOR_STEP_MS = 60_000;
+/** En ileri saat en çok bu kadar geride kalır; diske en çok bu sıklıkla yazılır. */
+const CLOCK_FLOOR_STEP_MS = 10 * 60_000;
 export const OFFLINE_MAX_MS = 72 * 60 * 60_000;
 const MAX_OPS_PER_REQUEST = 20;
 const MAX_WAITERS = 40;
@@ -114,6 +117,7 @@ export class OfflineHub extends EventEmitter {
   private readonly server: HubServer;
   private readonly timings: typeof TIMINGS;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private clockTimer: NodeJS.Timeout | null = null;
   private probeTimer: NodeJS.Timeout | null = null;
   private nudgeTimer: NodeJS.Timeout | null = null;
   private offlineTimer: NodeJS.Timeout | null = null;
@@ -152,7 +156,9 @@ export class OfflineHub extends EventEmitter {
       return 'clock-rollback';
     }
     this.advanceClockFloor(now);
-    if (data.mode === 'offline' && data.snapshotAt) {
+    // Moda bakılmaz: açılışta kayıtlı mod "online" olabilir, kesinti henüz
+    // algılanmamıştır. Başarılı her bulut bağlantısı `snapshotAt`'i tazeler.
+    if (data.snapshotAt) {
       const since = Math.max(now, data.clockFloor ?? 0) - Date.parse(data.snapshotAt);
       if (since > OFFLINE_MAX_MS) return 'offline-too-long';
     }
@@ -177,6 +183,11 @@ export class OfflineHub extends EventEmitter {
     void this.refresh();
     this.refreshTimer = setInterval(() => void this.refresh(), this.timings.refreshMs);
     this.refreshTimer.unref?.();
+    // Saat koruması: istek gelmese de geçen zaman kaydedilir — kesintide merkez
+    // saatlerce boşta kalıp sonra saat geri alınırsa da yakalansın. Geri alınmış
+    // saat en ileri saati düşürmez (yalnız ileri gider).
+    this.clockTimer = setInterval(() => this.advanceClockFloor(this.now()), this.timings.clockTickMs);
+    this.clockTimer.unref?.();
     // Ajan kesinti ortasında yeniden başladıysa kaldığı yerden devam: bekleyen
     // işlem varsa önce buluta ulaşılıp ulaşılamadığı anlaşılsın.
     if (this.data && this.data.log.length > 0 && this.data.mode === 'online') this.data.mode = 'offline';
@@ -184,10 +195,10 @@ export class OfflineHub extends EventEmitter {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    for (const timer of [this.refreshTimer, this.probeTimer, this.nudgeTimer, this.offlineTimer]) {
+    for (const timer of [this.refreshTimer, this.probeTimer, this.nudgeTimer, this.offlineTimer, this.clockTimer]) {
       if (timer) clearTimeout(timer);
     }
-    this.refreshTimer = this.probeTimer = this.nudgeTimer = this.offlineTimer = null;
+    this.refreshTimer = this.probeTimer = this.nudgeTimer = this.offlineTimer = this.clockTimer = null;
     for (const wake of this.waiters) wake();
     this.waiters.clear();
     this.store.flush();

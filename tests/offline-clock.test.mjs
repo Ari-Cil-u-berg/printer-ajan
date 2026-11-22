@@ -36,7 +36,7 @@ function fakeCloud(clock) {
   return cloud;
 }
 
-function makeHub(cloud, dir, clock) {
+function makeHub(cloud, dir, clock, timings = {}) {
   return new OfflineHub({
     apiBaseUrl: () => 'https://api.test',
     pairings: () => [{ deviceId: 'dev-bar', stations: ['BAR'], printable: true }],
@@ -49,7 +49,7 @@ function makeHub(cloud, dir, clock) {
     port: 0,
     fetchImpl: cloud.fetch,
     now: () => clock.local,
-    timings: { offlineAfterMs: 30, probeWhileOfflineMs: 60_000, busyRetryMs: 10, errorRetryMs: 10, pollMaxMs: 200, nudgeDebounceMs: 5 },
+    timings: { offlineAfterMs: 30, probeWhileOfflineMs: 60_000, busyRetryMs: 10, errorRetryMs: 10, pollMaxMs: 200, nudgeDebounceMs: 5, clockTickMs: 20, ...timings },
   });
 }
 
@@ -182,6 +182,60 @@ test('bilgisayarın saati ileri kalmışsa, buluta ulaşınca en ileri saat sunu
     hub.setCloudConnected(false);
     await waitFor(() => hub.status().mode === 'offline');
     assert.equal((await state(hub.port(), g, clock.local)).status, 200);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('kesintide merkez saatlerce boşta kalsa da saat geri alınırsa yakalanır', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ari-clock-'));
+  const start = Date.now();
+  const clock = { local: start, server: start };
+  const cloud = fakeCloud(clock);
+  const hub = makeHub(cloud, dir, clock);
+  await hub.start();
+  try {
+    await waitFor(() => hub.status().role === 'hub');
+    cloud.down = true;
+    hub.setCloudConnected(false);
+    await waitFor(() => hub.status().mode === 'offline');
+    // 12 saat geçti, hiç istek gelmedi — yalnız merkezin kendi zamanlayıcısı.
+    clock.local = start + 12 * HOUR;
+    await new Promise((r) => setTimeout(r, 120));
+    // Saat "kesinti + 2 saat"e geri alındı: izin hâlâ geçerli sanılırdı.
+    clock.local = start + 2 * HOUR;
+    const g = grant(IDS.waiter, 'Zeynep K.', WAITER_PERMS);
+    const rolled = await state(hub.port(), g, clock.local);
+    assert.equal(rolled.status, 503);
+    assert.equal(rolled.error, 'clock-rollback');
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('72 saat sınırı kayıtlı moda bakmaz: açılışta kesinti henüz algılanmamışken de geçerli', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ari-clock-'));
+  const start = Date.now();
+  const clock = { local: start, server: start };
+  const cloud = fakeCloud(clock);
+  let hub = makeHub(cloud, dir, clock);
+  await hub.start();
+  await waitFor(() => hub.status().role === 'hub');
+  await hub.stop();
+  // 73 saat sonra, internetsiz açılış: mod diskte "online", kesinti 30 ms sonra algılanacak.
+  cloud.down = true;
+  clock.local = start + 73 * HOUR;
+  // Kesinti algılaması geciksin ki istek "online" moddayken gelsin.
+  hub = makeHub(cloud, dir, clock, { offlineAfterMs: 60_000 });
+  await hub.start();
+  try {
+    await waitFor(() => hub.status().listening);
+    const exp = Math.floor(clock.local / 1000) + 3600;
+    const g = grant(IDS.waiter, 'Zeynep K.', WAITER_PERMS, { exp });
+    const late = await state(hub.port(), g, clock.local);
+    assert.equal(hub.status().mode, 'online');
+    assert.equal(late.status, 503);
+    assert.equal(late.error, 'offline-too-long');
   } finally {
     await hub.stop();
   }
