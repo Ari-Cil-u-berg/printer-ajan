@@ -41,6 +41,11 @@ export interface HubServerDeps {
   key(): { key: Buffer; branchId: string } | null;
   posOrigin(): Promise<string | null>;
   handle(route: HubRoute, claims: OfflineGrantClaims, body: unknown, signal: AbortSignal): Promise<unknown>;
+  /**
+   * Merkez şu an işlem alabilir mi (saat koruması, en uzun kesinti). Bir kod
+   * dönerse istek 503 ile reddedilir — kimlik doğrulamadan ÖNCE, ucuz.
+   */
+  guard?: () => string | null;
   now?: () => number;
 }
 
@@ -132,6 +137,8 @@ export class HubServer {
 
     const hub = this.deps.key();
     if (!hub) return send(res, 503, { error: 'not-hub' });
+    const refused = this.deps.guard?.() ?? null;
+    if (refused) return send(res, 503, { error: refused });
 
     const raw = await readBody(req);
     if (raw === 'too-large') return send(res, 413, { error: 'too-large' });

@@ -64,6 +64,12 @@ export interface HubData {
   offlineDay: string;
   offlineNo: number;
   mode: HubMode;
+  /**
+   * Saat koruması (v0.3.35): merkezin gördüğü en ileri saat (ms). Bilgisayarın
+   * saati bunun gerisine alınırsa merkez işlem almaz — izinlerin 24 saatlik
+   * süresi saat geri alınarak uzatılamasın. Eski dosyada yok (0 sayılır).
+   */
+  clockFloor?: number;
 }
 
 export interface TicketRequest {
