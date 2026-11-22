@@ -91,6 +91,20 @@ const TIMINGS = {
 };
 
 const API_PREFIX = '/api/v1';
+
+/**
+ * SAAT KORUMASI (v0.3.35, kullanıcı kararı 22.11.2026). Kesintide çalışma
+ * 24 saatlik izinle sınırlı; izin süresini merkez kendi saatiyle denetler.
+ * Bilgisayarın saati geri alınarak bu süre uzatılamasın diye merkez gördüğü
+ * en ileri saati şifreli diskine yazar (`HubData.clockFloor`):
+ *   - saat bunun 15 dakikadan fazla gerisindeyse → `clock-rollback`;
+ *   - internet 72 saattir yoksa (son bulut bağlantısı `snapshotAt`) → `offline-too-long`.
+ * Buluta ulaşınca, en ileri saat sunucunun saatinden ilerideyse (bilgisayarın
+ * saati yanlışlıkla ileri kalmıştı) sunucu saatine çekilir.
+ */
+const CLOCK_ROLLBACK_TOLERANCE_MS = 15 * 60_000;
+const CLOCK_FLOOR_STEP_MS = 60_000;
+export const OFFLINE_MAX_MS = 72 * 60 * 60_000;
 const MAX_OPS_PER_REQUEST = 20;
 const MAX_WAITERS = 40;
 
@@ -122,8 +136,34 @@ export class OfflineHub extends EventEmitter {
       key: () => (this.data ? { key: Buffer.from(this.data.hubKey, 'base64url'), branchId: this.data.branchId } : null),
       posOrigin: deps.posOrigin,
       handle: (route, claims, body, signal) => this.handle(route, claims, body, signal),
+      guard: () => this.clockGuard(),
       ...(deps.now ? { now: deps.now } : {}),
     });
+  }
+
+  /** Merkez şu an işlem alabilir mi — bkz. SAAT KORUMASI. */
+  private clockGuard(): string | null {
+    const data = this.data;
+    if (!data) return null;
+    const now = this.now();
+    const floor = data.clockFloor ?? 0;
+    if (now < floor - CLOCK_ROLLBACK_TOLERANCE_MS) {
+      log.warn('offline hub clock moved back — refusing', { behindMs: floor - now });
+      return 'clock-rollback';
+    }
+    this.advanceClockFloor(now);
+    if (data.mode === 'offline' && data.snapshotAt) {
+      const since = Math.max(now, data.clockFloor ?? 0) - Date.parse(data.snapshotAt);
+      if (since > OFFLINE_MAX_MS) return 'offline-too-long';
+    }
+    return null;
+  }
+
+  private advanceClockFloor(at: number): void {
+    const data = this.data;
+    if (!data || at <= (data.clockFloor ?? 0) + CLOCK_FLOOR_STEP_MS) return;
+    data.clockFloor = at;
+    this.store.save(data);
   }
 
   private now(): number {
@@ -254,6 +294,13 @@ export class OfflineHub extends EventEmitter {
       this.data.keyVersion = body.keyVersion!;
       if (snapshot) acceptSnapshot(this.data, snapshot, new Date(this.now()));
       else this.data.snapshotAt = new Date(this.now()).toISOString();
+      // Saat koruması: bilgisayarın saati ileri kalmış ve sonra düzeltilmişse
+      // en ileri saat sunucu saatine çekilir (yoksa kesintide yanlışlıkla
+      // "saat geri alındı" denirdi); sonra yerel saatle ilerler.
+      if (result.serverAt !== null && (this.data.clockFloor ?? 0) > result.serverAt + CLOCK_ROLLBACK_TOLERANCE_MS) {
+        this.data.clockFloor = result.serverAt;
+      }
+      this.advanceClockFloor(this.now());
       this.persist();
       return;
     }
@@ -353,7 +400,7 @@ export class OfflineHub extends EventEmitter {
     token: string,
     path: string,
     body: unknown,
-  ): Promise<{ kind: 'ok'; body: T } | { kind: 'busy' } | { kind: 'network' } | { kind: 'error'; status: number }> {
+  ): Promise<{ kind: 'ok'; body: T; serverAt: number | null } | { kind: 'busy' } | { kind: 'network' } | { kind: 'error'; status: number }> {
     const fetchImpl = this.deps.fetchImpl ?? fetch;
     try {
       const res = await fetchImpl(`${this.deps.apiBaseUrl().replace(/\/$/, '')}${API_PREFIX}${path}`, {
@@ -366,7 +413,10 @@ export class OfflineHub extends EventEmitter {
       if (res.status === 409) return { kind: 'busy' };
       if (!res.ok) return { kind: 'error', status: res.status };
       const json = (await res.json()) as { data?: T } & T;
-      return { kind: 'ok', body: (json.data ?? json) as T };
+      // Sunucunun saati (HTTP `Date`) — saat korumasının düzeltmesi için.
+      const date = (res.headers as Headers | undefined)?.get?.('date');
+      const serverAt = date ? Date.parse(date) : NaN;
+      return { kind: 'ok', body: (json.data ?? json) as T, serverAt: Number.isFinite(serverAt) ? serverAt : null };
     } catch {
       return { kind: 'network' };
     }
