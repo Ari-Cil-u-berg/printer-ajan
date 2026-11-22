@@ -14,6 +14,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      mac_only:
+        description: "Yalnız macOS DMG'sini mevcut sürüme ekle (Windows zaten yayınlandıysa)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -31,6 +36,9 @@ jobs:
 
   windows:
     needs: test
+    # Yalnız Mac: Windows sürümü zaten yayında (release.sh "zaten yayınlanmış"
+    # der ve iş düşer); bu iş atlanır, macOS yine de çalışır.
+    if: ${{ !inputs.mac_only }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,8 +85,13 @@ jobs:
     # Windows, not test: the Windows job is what electron-builder's publish step
     # creates the GitHub Release with, and `gh release upload` below needs it to
     # already exist.
-    needs: windows
-    runs-on: macos-14 # arm64 runner; the target is a universal binary either way
+    needs: [test, windows]
+    # Windows yayınlandıysa ya da elle "yalnız Mac" istendiyse (Windows atlandı).
+    if: ${{ always() && needs.test.result == 'success' && (needs.windows.result == 'success' || (inputs.mac_only && needs.windows.result == 'skipped')) }}
+    # macos-14 artık desteklenmiyor (22.11.2026: "The configuration
+    # 'macos-14-arm64-us-default' is not supported" — v0.3.35'in Mac işi
+    # başlamadan iptal oldu). arm64 runner; hedef yine universal.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
