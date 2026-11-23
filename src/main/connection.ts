@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { isStation } from '../shared/types';
+import { isLabelJob } from './print/label/validate';
 import type {
   ClientMessage,
   ConnectionState,
@@ -327,6 +328,8 @@ export function isPrintJob(value: unknown): value is PrintJob {
   }
   if (job.codepage !== undefined && !isSaneText(job.codepage, 32)) return false;
 
+  // Etiket işi (23.11.2026): yalnız `label`; fiş alanlarıyla karışık iş reddedilir.
+  if (job.label !== undefined) return job.escpos === undefined && job.content === undefined && isLabelJob(job.label);
   if (typeof job.escpos === 'string') return job.escpos.length <= MAX_ESCPOS_B64;
   return isTicketModel(job.content);
 }

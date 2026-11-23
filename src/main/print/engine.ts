@@ -1,6 +1,7 @@
-import type { PrintJob, PrinterConfig } from '../../shared/types';
+import type { LabelJob, PrintJob, PrinterConfig } from '../../shared/types';
 import { log } from '../logger';
 import { EscPosBuilder, renderTicket } from './escpos';
+import { encodeLabel, toMono } from './label/encode';
 import { calibrationBlock, serverStyleTestSlip, serverTicketBytes } from './server-escpos';
 import { printOverNetwork, probeNetworkPrinter } from './network-driver';
 import { NotRetryablePrintError } from './print-errors';
@@ -35,12 +36,28 @@ function textTableLabel(printer: PrinterConfig): string {
   return TABLE_LABEL[printer.textTable ?? ''] ?? 'Varsayılan (WPC1254 · 91)';
 }
 
+/**
+ * Etiket çizici — Electron'da `print/label/render.ts`; testte sahtesi. Motor Electron'a
+ * doğrudan bağlanmasın diye dışarıdan verilir.
+ */
+export interface LabelRenderer {
+  bitmap(job: LabelJob): Promise<{ width: number; height: number; bgra: Buffer }>;
+  printViaDriver(job: LabelJob, deviceName: string): Promise<void>;
+}
+
+/** Etikette kopya sınırı (fişte 5): bir çocuğa iki, bir pakete birkaç etiket. */
+const MAX_LABEL_COPIES = 10;
+
 export class PrintEngine {
-  constructor(private readonly resolve: PrinterResolver) {}
+  constructor(
+    private readonly resolve: PrinterResolver,
+    private readonly labels?: LabelRenderer,
+  ) {}
 
   async print(job: PrintJob): Promise<void> {
     const { printer, label } = this.resolve(job);
     if (!printer) throw new PrinterNotConfiguredError(label);
+    if (job.label) return this.printLabel(job, job.label, printer);
 
     const bytes = this.renderJob(job, printer);
     const copies = Math.max(1, Math.min(job.copies || 1, 5));
@@ -55,6 +72,39 @@ export class PrintEngine {
       }
     }
     log.info('printed', { jobId: job.jobId, station: job.station, route: job.route, copies, bytes: bytes.length });
+  }
+
+  /**
+   * Etiket: ESC/POS öneki EKLENMEZ (TSPL/ZPL/EPL yazıcısı onu çöp basar). Sürücü yolu yalnız
+   * bu bilgisayarda kurulu yazıcıya gider; ağ adresi seçilmişse ham dillerden biri gerekir.
+   */
+  private async printLabel(job: PrintJob, labelJob: LabelJob, printer: PrinterConfig): Promise<void> {
+    if (!this.labels) throw new NotRetryablePrintError('Bu ajan etiket çizemiyor');
+    const copies = Math.max(1, Math.min(job.copies || 1, MAX_LABEL_COPIES));
+    let sendOnce: () => Promise<void>;
+    if (labelJob.language === 'DRIVER') {
+      if (printer.target.kind !== 'spooler') {
+        throw new NotRetryablePrintError(
+          'Sürücüyle etiket için bu bilgisayarda kurulu yazıcı seçilmeli; ağ yazıcısında TSPL, ZPL, EPL ya da ESC/POS seçin',
+        );
+      }
+      const deviceName = printer.target.printerName;
+      sendOnce = () => this.labels!.printViaDriver(labelJob, deviceName);
+    } else {
+      const bmp = await this.labels.bitmap(labelJob);
+      const bytes = encodeLabel(labelJob, toMono(bmp.bgra, bmp.width, bmp.height));
+      sendOnce = () => this.send(printer, bytes);
+    }
+    for (let i = 0; i < copies; i++) {
+      try {
+        await sendOnce();
+      } catch (err) {
+        if (i === 0) throw err;
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new NotRetryablePrintError(`${i}/${copies} etiket basıldı, kalanı basılamadı: ${reason}`);
+      }
+    }
+    log.info('label printed', { jobId: job.jobId, route: job.route, language: labelJob.language, copies });
   }
 
   private renderJob(job: PrintJob, printer: PrinterConfig): Buffer {
