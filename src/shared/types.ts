@@ -162,12 +162,56 @@ export interface TicketModel {
   footer?: string;
 }
 
+/**
+ * ETİKET (STICKER) YAZICISI (23.11.2026). Etiket tek çizimdir — ajan kendi içindeki
+ * Chromium'da kurar — ve iki yoldan basılır:
+ *   DRIVER  → işletim sisteminin sürücüsüne sayfa olarak (sürücüsü kurulu her yazıcı),
+ *   TSPL / ZPL / EPL / ESCPOS → aynı çizim 1 bitlik resme çevrilir, yazıcının diliyle
+ *   ham bayt olarak (sürücüsüz; ağ yazıcısı ve hız).
+ * Bluetooth mini yazıcılar (kapalı protokol) kapsam dışı.
+ */
+export const LABEL_LANGUAGES = ['DRIVER', 'TSPL', 'ZPL', 'EPL', 'ESCPOS'] as const;
+export type LabelLanguage = (typeof LABEL_LANGUAGES)[number];
+
+export const LABEL_TEXT_SIZES = ['S', 'M', 'L', 'XL'] as const;
+export type LabelTextSize = (typeof LABEL_TEXT_SIZES)[number];
+
+export const LABEL_ALIGNS = ['left', 'center', 'right'] as const;
+export type LabelAlign = (typeof LABEL_ALIGNS)[number];
+
+/** Şablon öğesi — alanları sunucuda ÇÖZÜLMÜŞ, düz metin. Sıra = etiketteki sıra. */
+export type LabelElement =
+  | { type: 'text'; text: string; size: LabelTextSize; bold?: boolean; align?: LabelAlign }
+  /** QR'ı sunucu üretir (`qrcode`); satır satır '0'/'1' (1 = siyah modül). Ajan SVG çizer. */
+  | { type: 'qr'; rows: string[] }
+  /** `data:image/png;base64,…` — sunucunun küçülttüğü işletme logosu. */
+  | { type: 'logo'; src: string }
+  | { type: 'line' };
+
+export interface LabelJob {
+  language: LabelLanguage;
+  widthMm: number;
+  heightMm: number;
+  /** Etiketler arası boşluk; 0 = sürekli rulo. */
+  gapMm: number;
+  dpi: 203 | 300;
+  rotate?: 0 | 180;
+  /**
+   * Siyah/beyaz ters çıkarsa (dilin bit yönü cihazda farklıysa) sunucudaki ayarla
+   * düzeltilir — ajan sürümü gerekmeden.
+   */
+  invert?: boolean;
+  elements: LabelElement[];
+}
+
 export interface PrintJob {
   jobId: string;
   station: Station;
   copies: number;
   escpos?: string; // base64 pre-rendered bytes (preferred)
   content?: TicketModel; // structured fallback
+  /** Etiket işi — `escpos`/`content` yerine. Bkz. `LabelJob`. */
+  label?: LabelJob;
   codepage?: string; // overrides printer config
   /**
    * Which pairing delivered the job — its `deviceId`. Stamped LOCALLY on

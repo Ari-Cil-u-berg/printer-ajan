@@ -25,6 +25,7 @@ import { OkcManager } from './okc/okc';
 import { OfflineHub } from './offline/hub';
 import type { HubCipher } from './offline/hub-store';
 import { PrintEngine } from './print/engine';
+import { printLabelViaDriver, renderLabelBitmap } from './print/label/render';
 import { JobQueue } from './queue';
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
@@ -52,7 +53,10 @@ export class Agent extends EventEmitter {
   constructor(private readonly appVersion: string) {
     super();
     this.config = new ConfigStore();
-    this.engine = new PrintEngine((job) => this.printerFor(job));
+    this.engine = new PrintEngine((job) => this.printerFor(job), {
+      bitmap: renderLabelBitmap,
+      printViaDriver: printLabelViaDriver,
+    });
     this.queue = new JobQueue(this.config.dataDir(), (job) => this.engine.print(job));
     this.okc = new OkcManager(this.config.dataDir(), this.config.get().okc, (okc) =>
       this.config.update({ okc }),
