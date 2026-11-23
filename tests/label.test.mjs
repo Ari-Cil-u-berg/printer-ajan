@@ -8,7 +8,7 @@ import test from 'node:test';
 import { isPrintJob } from '../dist/main/connection.js';
 import { PrintEngine } from '../dist/main/print/engine.js';
 import { encodeEpl, encodeEscPos, encodeLabel, encodeTspl, encodeZpl, toMono } from '../dist/main/print/label/encode.js';
-import { escapeHtml, labelHtml, qrPath } from '../dist/main/print/label/html.js';
+import { escapeHtml, labelHtml, qrPath, qrSideMm, QR_QUIET } from '../dist/main/print/label/html.js';
 import { isLabelJob, labelDots } from '../dist/main/print/label/validate.js';
 
 const QR21 = Array.from({ length: 21 }, (_, y) => (y % 2 ? '1'.repeat(21) : '0'.repeat(21)));
@@ -74,6 +74,22 @@ test('labelHtml: metin kaçışlanır, CSP ağı kapatır, sayfa etiket ölçüs
 
 test('qrPath: yan yana siyah modüller tek dikdörtgen', () => {
   assert.equal(qrPath(['0110', '1001']), 'M1 0h2v1h-2zM0 1h1v1h-1zM3 1h1v1h-1z');
+});
+
+test('QR: modül başına tam sayı nokta (en az 2, sığarsa), sessiz bölge 4 modül (CodeRabbit #14)', () => {
+  const job = { widthMm: 50, heightMm: 30, dpi: 203 };
+  const perModule = (n, side, dpi = 203) => Math.round(((side / 25.4) * dpi) / (n + QR_QUIET * 2));
+  // 21 modül: yarım kenar (15 mm ≈ 119 nokta) 29 modüle 4 nokta verir.
+  assert.equal(perModule(21, qrSideMm(21, job)), 4);
+  // 69 modül (300 karakterlik içerik): yarım kenarda 1 nokta düşerdi → kenar büyür, 2 nokta.
+  assert.equal(perModule(69, qrSideMm(69, job)), 2);
+  assert.ok(qrSideMm(69, job) <= 30 - 3, 'etiketin kullanılabilir kısa kenarını aşmaz');
+  // 177 modül 30 mm'ye 2 noktayla sığmaz: sığan en büyük (1 nokta).
+  assert.equal(perModule(177, qrSideMm(177, job)), 1);
+  // 300 dpi'de aynı etiket daha çok nokta verir.
+  assert.ok(perModule(69, qrSideMm(69, { ...job, dpi: 300 }), 300) >= 2);
+  const html = labelHtml(label({ elements: [{ type: 'qr', rows: QR21 }] }));
+  assert.match(html, /viewBox="-4 -4 29 29"/);
 });
 
 test('labelDots: mm → nokta, genişlik 8in katına', () => {

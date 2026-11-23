@@ -44,6 +44,25 @@ export function qrPath(rows: readonly string[]): string {
   return parts.join('');
 }
 
+/** QR standardının sessiz bölgesi: her kenarda 4 modül (CodeRabbit #14). */
+export const QR_QUIET = 4;
+
+/**
+ * QR'ın kenarı (mm): modül başına TAM SAYI yazıcı noktası, en az 2 (1 noktalık modül okunmaz).
+ * Önce etiketin kısa kenarının yarısı denenir; modül başına 2 nokta düşmüyorsa kenar, etiketin
+ * kullanılabilir kısa kenarına kadar büyür. Orada da sığmıyorsa sığan en büyük (en az 1).
+ * 177 modüllük QR 50×30 mm / 203 dpi'de yarım kenara (15 mm ≈ 120 nokta) sığmıyordu (CodeRabbit #14).
+ */
+export function qrSideMm(modules: number, job: Pick<LabelJob, 'widthMm' | 'heightMm' | 'dpi'>): number {
+  const total = modules + QR_QUIET * 2;
+  const dotsFor = (mm: number) => Math.floor((mm / 25.4) * job.dpi);
+  const short = Math.min(job.widthMm, job.heightMm);
+  const preferred = Math.floor(dotsFor(short * 0.5) / total);
+  const fits = Math.floor(dotsFor(short - PADDING_MM * 2) / total);
+  const perModule = Math.max(1, Math.min(Math.max(2, preferred), fits));
+  return Math.round(((total * perModule) / job.dpi) * 25.4 * 100) / 100;
+}
+
 function element(el: LabelElement, job: LabelJob): string {
   switch (el.type) {
     case 'text': {
@@ -54,11 +73,10 @@ function element(el: LabelElement, job: LabelJob): string {
     }
     case 'qr': {
       const n = el.rows.length;
-      // Sessiz bölge 2 modül; kenar uzunluğu etiketin kısa kenarının en çok yarısı.
-      const side = Math.min(job.widthMm, job.heightMm) * 0.5;
+      const side = qrSideMm(n, job);
       return (
-        `<div class="c"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 ${n + 4} ${n + 4}" ` +
-        `style="width:${side}mm;height:${side}mm" shape-rendering="crispEdges">` +
+        `<div class="c"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-${QR_QUIET} -${QR_QUIET} ${n + QR_QUIET * 2} ${n + QR_QUIET * 2}" ` +
+        `style="width:${side}mm;height:${side}mm;flex:none" shape-rendering="crispEdges">` +
         `<path fill="#000" d="${qrPath(el.rows)}"/></svg></div>`
       );
     }

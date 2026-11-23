@@ -1,5 +1,6 @@
 import { BrowserWindow, session as electronSession } from 'electron';
 import type { LabelJob } from '../../../shared/types';
+import { NotRetryablePrintError } from '../print-errors';
 import { labelHtml } from './html';
 import { labelDots } from './validate';
 
@@ -17,6 +18,8 @@ import { labelDots } from './validate';
  */
 
 const RENDER_TIMEOUT_MS = 15_000;
+/** Sürücü kuyruğu yavaş olabilir (ilk baskıda sürücü yüklenir): çizimden uzun. */
+const DRIVER_TIMEOUT_MS = 60_000;
 const PARTITION = 'label-render';
 
 let chain: Promise<unknown> = Promise.resolve();
@@ -83,13 +86,32 @@ async function dispose(win: BrowserWindow): Promise<void> {
   await Promise.race([Promise.all([gone, closed]), new Promise((r) => setTimeout(r, 2_000))]);
 }
 
-function withTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
+/**
+ * Pencereyle tek iş: süre dolunca beklemeyi bırakır AMA sırayı (`serial`) pencere kapanana
+ * kadar tutar — zaman aşımında ikinci pencere eskisi açıkken açılmaz (CodeRabbit #14).
+ * Pencere `dispose` ile yok edilince içerdeki yükleme/yazdırma da düşer.
+ */
+async function withWindow<T>(
+  size: { width: number; height: number; offscreen: boolean },
+  what: string,
+  timeoutMs: number,
+  work: (win: BrowserWindow) => Promise<T>,
+): Promise<T> {
+  const win = openWindow(size.width, size.height, size.offscreen);
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} zaman aşımı`)), RENDER_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new LabelTimeoutError(`${what} zaman aşımı`)), timeoutMs);
   });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  try {
+    return await Promise.race([work(win), timeout]);
+  } finally {
+    clearTimeout(timer);
+    await dispose(win);
+  }
 }
+
+/** Süre doldu. Sürücüye gönderildikten SONRA olduysa engine onu yeniden denemez (aşağıda). */
+export class LabelTimeoutError extends Error {}
 
 async function load(win: BrowserWindow, job: LabelJob, scale = 1): Promise<void> {
   const painted = new Promise<void>((resolve) => win.once('ready-to-show', () => resolve()));
@@ -104,27 +126,19 @@ export interface LabelBitmap {
   bgra: Buffer;
 }
 
-/** Etiketi yazıcının nokta ölçüsünde (genişlik 8'in katı) çizer. */
+/** Etiketi yazıcının nokta ölçüsünde (genişlik 8'in katı) çizer. Kâğıda bir şey gitmez: zaman aşımı yeniden denenebilir. */
 export function renderLabelBitmap(job: LabelJob): Promise<LabelBitmap> {
+  const { width, height } = labelDots(job);
   return serial(() =>
-    withTimeout(
-      (async () => {
-        const { width, height } = labelDots(job);
-        const win = openWindow(width, height, true);
-        try {
-          // 1 CSS mm = dpi/25.4 nokta: 96 dpi CSS pikseli dpi/96 kadar büyütülür (HTML'de CSS zoom).
-          await load(win, job, job.dpi / 96);
-          const image = await win.webContents.capturePage({ x: 0, y: 0, width, height });
-          // Ekran ölçeği ya da yuvarlama yüzünden boy farklıysa tam nokta ölçüsüne getir.
-          const sized = image.getSize();
-          const exact = sized.width === width && sized.height === height ? image : image.resize({ width, height, quality: 'best' });
-          return { width, height, bgra: exact.toBitmap() };
-        } finally {
-          await dispose(win);
-        }
-      })(),
-      'Etiket çizimi',
-    ),
+    withWindow({ width, height, offscreen: true }, 'Etiket çizimi', RENDER_TIMEOUT_MS, async (win) => {
+      // 1 CSS mm = dpi/25.4 nokta: 96 dpi CSS pikseli dpi/96 kadar büyütülür (HTML'de CSS zoom).
+      await load(win, job, job.dpi / 96);
+      const image = await win.webContents.capturePage({ x: 0, y: 0, width, height });
+      // Ekran ölçeği ya da yuvarlama yüzünden boy farklıysa tam nokta ölçüsüne getir.
+      const sized = image.getSize();
+      const exact = sized.width === width && sized.height === height ? image : image.resize({ width, height, quality: 'best' });
+      return { width, height, bgra: exact.toBitmap() };
+    }),
   );
 }
 
@@ -132,36 +146,39 @@ export function renderLabelBitmap(job: LabelJob): Promise<LabelBitmap> {
  * Sürücü yolu: sayfa, kurulu yazıcıya etiket ölçüsünde, kenarsız ve sessiz gider.
  * Not (Electron sorun kaydı): bazı Windows sürücülerinde sessiz baskı `pageSize`ı yok sayıp
  * sürücünün varsayılan kâğıdını kullanır — kurulumda etiket ölçüsü sürücüde de seçilir.
+ *
+ * ÇİFT BASKI YOK (CodeRabbit #14): `print()` çağrıldıktan sonra süre dolarsa ya da sonuç
+ * gelmezse etiket kâğıda çıkmış olabilir — hata `NotRetryablePrintError` olur, kuyruk aynı
+ * etiketi ikinci kez basmaz. Sayfa yüklenirken düşerse (kâğıda bir şey gitmedi) yeniden denenir.
  */
 export function printLabelViaDriver(job: LabelJob, deviceName: string): Promise<void> {
+  // Sayfa CSS pikseliyle açılır (96 dpi); yazdırmada ölçüyü `@page` ve `pageSize` verir.
+  const width = Math.max(64, Math.round((job.widthMm / 25.4) * 96));
+  const height = Math.max(64, Math.round((job.heightMm / 25.4) * 96));
+  let submitted = false;
   return serial(() =>
-    withTimeout(
-      (async () => {
-        // Sayfa CSS pikseliyle açılır (96 dpi); yazdırmada ölçüyü `@page` ve `pageSize` verir.
-        const width = Math.max(64, Math.round((job.widthMm / 25.4) * 96));
-        const height = Math.max(64, Math.round((job.heightMm / 25.4) * 96));
-        const win = openWindow(width, height, false);
-        try {
-          await load(win, job);
-          await new Promise<void>((resolve, reject) => {
-            win.webContents.print(
-              {
-                silent: true,
-                deviceName,
-                printBackground: true,
-                landscape: false,
-                margins: { marginType: 'none' },
-                // mikron
-                pageSize: { width: Math.round(job.widthMm * 1000), height: Math.round(job.heightMm * 1000) },
-              },
-              (success, failureReason) => (success ? resolve() : reject(new Error(`Sürücüye gönderilemedi: ${failureReason || 'bilinmeyen hata'}`))),
-            );
-          });
-        } finally {
-          await dispose(win);
-        }
-      })(),
-      'Sürücüyle etiket',
-    ),
+    withWindow({ width, height, offscreen: false }, 'Sürücüyle etiket', DRIVER_TIMEOUT_MS, async (win) => {
+      await load(win, job);
+      submitted = true;
+      await new Promise<void>((resolve, reject) => {
+        win.webContents.print(
+          {
+            silent: true,
+            deviceName,
+            printBackground: true,
+            landscape: false,
+            margins: { marginType: 'none' },
+            // mikron
+            pageSize: { width: Math.round(job.widthMm * 1000), height: Math.round(job.heightMm * 1000) },
+          },
+          (success, failureReason) => (success ? resolve() : reject(new Error(`Sürücüye gönderilemedi: ${failureReason || 'bilinmeyen hata'}`))),
+        );
+      });
+    }).catch((err: unknown) => {
+      if (submitted && err instanceof LabelTimeoutError) {
+        throw new NotRetryablePrintError('Etiket sürücüye gönderildi ama sonucu alınamadı — çift basmasın diye yeniden denenmedi');
+      }
+      throw err;
+    }),
   );
 }
