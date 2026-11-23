@@ -1,7 +1,7 @@
-İnternet kesilince yerel merkez için saat koruması.
+Etiket (sticker) yazıcısı desteği.
 
-- Kasa bilgisayarının saati geri alınırsa yerel merkez sipariş almaz: internetsiz çalışma, buluttan alınan 24 saatlik izinle sınırlı kalır.
-- İnternet 72 saattir yoksa yerel merkez sipariş almaz. Kısa bir internet bağlantısı (telefondan paylaşım yeter) her şeyi yeniden açar.
-- Bilgisayarın saati yanlışlıkla ileri kalmışsa, internete bağlanınca kendiliğinden düzeltilir.
+- Bilgisayarda sürücüsü kurulu her etiket yazıcısı (Zebra, TSC, Xprinter, Godex, Argox, Brother, DYMO…) ve sürücüsüz TSPL, ZPL, EPL, ESC/POS etiket yazıcıları basabilir.
+- Etiketin Türkçe harfleri, logosu ve QR kodu her yazıcıda aynı çıkar.
+- Etiket yazıcısı Yönetim → Donanım'dan tanımlanır; kasadaki "Etiket bas" ve çocuk oyun alanı etiketi Ari Adisyon'un bir sonraki güncellemesiyle gelir.
 
 Yazıcı ve yazarkasa ayarlarınız değişmedi.
